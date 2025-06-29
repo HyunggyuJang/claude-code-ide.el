@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Script to record WebSocket messages between VS Code and Claude Code
+# Script to record WebSocket messages between Emacs and Claude Code
 # Uses websocat to create a proxy and log all messages
 #
-# Usage: ./record-claude-messages.sh [working_directory]
+# Usage: ./record-emacs-claude-messages.sh [working_directory]
 #
 # Optional argument:
 #   working_directory - Directory to run Claude Code in (defaults to current directory)
@@ -20,7 +20,7 @@ NC='\033[0m' # No Color
 if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
     echo "Usage: $0 [working_directory]"
     echo ""
-    echo "Record WebSocket messages between VS Code and Claude Code"
+    echo "Record WebSocket messages between Emacs and Claude Code"
     echo ""
     echo "Arguments:"
     echo "  working_directory  Optional directory to run Claude Code in (defaults to current directory)"
@@ -59,50 +59,71 @@ if ! command -v claude &> /dev/null; then
     exit 1
 fi
 
-# Find VS Code lockfile
+# Find Emacs lockfile
 LOCKFILE_DIR="$HOME/.claude/ide"
 if [ ! -d "$LOCKFILE_DIR" ]; then
     echo -e "${RED}Error: Claude IDE directory not found at $LOCKFILE_DIR${NC}"
+    echo "Make sure Emacs with claude-code-ide is running and has started an MCP server"
     exit 1
 fi
 
 # List all lockfiles
 ls -la "$LOCKFILE_DIR"/*.lock >/dev/null 2>&1
 
-# Find VS Code lockfile by checking the content for "Visual Studio Code"
-VSCODE_LOCKFILE=""
+# Find Emacs lockfile by checking the content for "Emacs"
+EMACS_LOCKFILE=""
 for lockfile in "$LOCKFILE_DIR"/*.lock; do
-    if [ -f "$lockfile" ] && grep -q "Visual Studio Code" "$lockfile" 2>/dev/null; then
-        VSCODE_LOCKFILE="$lockfile"
-        break
+    if [ -f "$lockfile" ] && grep -q "Emacs" "$lockfile" 2>/dev/null; then
+        # Additional check: ensure this lockfile is for our working directory
+        if grep -q "$(echo "$CLAUDE_WORKING_DIR" | sed 's/[[\.*^$(){}?+|\\]/\\\\&/g')" "$lockfile" 2>/dev/null; then
+            EMACS_LOCKFILE="$lockfile"
+            break
+        fi
     fi
 done
 
-if [ -z "$VSCODE_LOCKFILE" ]; then
-    echo -e "${RED}Error: No VS Code lockfile found in $LOCKFILE_DIR${NC}"
-    echo "Make sure VS Code with Claude Code is running"
+# If no workspace-specific lockfile found, try any Emacs lockfile
+if [ -z "$EMACS_LOCKFILE" ]; then
+    echo -e "${YELLOW}No workspace-specific Emacs lockfile found, looking for any Emacs lockfile...${NC}"
+    for lockfile in "$LOCKFILE_DIR"/*.lock; do
+        if [ -f "$lockfile" ] && grep -q "Emacs" "$lockfile" 2>/dev/null; then
+            EMACS_LOCKFILE="$lockfile"
+            echo -e "${YELLOW}Using Emacs lockfile: $lockfile${NC}"
+            break
+        fi
+    done
+fi
+
+if [ -z "$EMACS_LOCKFILE" ]; then
+    echo -e "${RED}Error: No Emacs lockfile found in $LOCKFILE_DIR${NC}"
+    echo "Make sure Emacs with claude-code-ide is running and has started an MCP server"
+    echo "Available lockfiles:"
+    ls -la "$LOCKFILE_DIR"/*.lock 2>/dev/null || echo "  None found"
     exit 1
 fi
 
 # Extract port from filename
-PORT=$(basename "$VSCODE_LOCKFILE" .lock)
+PORT=$(basename "$EMACS_LOCKFILE" .lock)
 
 if ! [[ "$PORT" =~ ^[0-9]+$ ]]; then
     echo -e "${RED}Error: Invalid port number: $PORT${NC}"
     exit 1
 fi
 
-echo -e "${GREEN}Found VS Code Claude Code on port: $PORT${NC}"
+echo -e "${GREEN}Found Emacs claude-code-ide on port: $PORT${NC}"
+echo -e "${GREEN}Using lockfile: $EMACS_LOCKFILE${NC}"
 
 # Read the original lockfile to get workspace info
-LOCKFILE_CONTENT=$(cat "$VSCODE_LOCKFILE")
+LOCKFILE_CONTENT=$(cat "$EMACS_LOCKFILE")
+echo -e "${YELLOW}Emacs MCP Server Info:${NC}"
+echo "$LOCKFILE_CONTENT" | jq '.' 2>/dev/null || echo "$LOCKFILE_CONTENT"
 
 # Create logs directory in the script's directory
 LOG_DIR="$SCRIPT_DIR/claude_logs"
 mkdir -p "$LOG_DIR"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-LOG_FILE="$LOG_DIR/claude_messages_${TIMESTAMP}.log"
-JSON_FILE="$LOG_DIR/claude_messages_${TIMESTAMP}.jsonl"
+LOG_FILE="$LOG_DIR/emacs_claude_messages_${TIMESTAMP}.log"
+JSON_FILE="$LOG_DIR/emacs_claude_messages_${TIMESTAMP}.jsonl"
 
 # Proxy port (use a high port to avoid conflicts, but stay under 65535)
 PROXY_PORT=$((PORT + 1000))
@@ -110,7 +131,7 @@ PROXY_PORT=$((PORT + 1000))
 # Create a new lockfile for the proxy
 PROXY_LOCKFILE="$LOCKFILE_DIR/${PROXY_PORT}.lock"
 
-# Create lockfile for proxy with same content as VS Code but different PID
+# Create lockfile for proxy with same content as Emacs but different PID
 echo "$LOCKFILE_CONTENT" | jq ".pid = $$" > "$PROXY_LOCKFILE"
 
 echo -e "${GREEN}Created proxy lockfile at: $PROXY_LOCKFILE${NC}"
@@ -126,23 +147,6 @@ echo ""
 # Global variables for PIDs
 CLIENT_PID=""
 SERVER_PID=""
-
-# Function to extract JSON from websocat output
-extract_json() {
-    while IFS= read -r line; do
-        echo "$line" >> "$LOG_FILE"
-
-        # Try to extract JSON from the line
-        # websocat format: [timestamp] Direction JSON
-        if [[ "$line" =~ \{.*\} ]]; then
-            # Extract JSON part
-            json="${BASH_REMATCH[0]}"
-            # Pretty print and save to JSON file
-            echo "$json" | jq '.' 2>/dev/null >> "$JSON_FILE" || echo "$json" >> "$JSON_FILE"
-            echo "---" >> "$JSON_FILE"
-        fi
-    done
-}
 
 # Start websocat proxy first
 echo -e "${GREEN}Starting proxy on port $PROXY_PORT...${NC}"
@@ -241,7 +245,7 @@ fi
 # Export the variables to ensure they're passed to claude
 export CLAUDE_CODE_SSE_PORT=$PROXY_PORT
 export ENABLE_IDE_INTEGRATION=true
-export TERM_PROGRAM=vscode
+export TERM_PROGRAM=emacs
 export FORCE_CODE_TERMINAL=true
 
 # Launch claude in the specified directory
@@ -249,6 +253,7 @@ export FORCE_CODE_TERMINAL=true
 CLAUDE_PID=$!
 
 echo -e "${GREEN}Claude Code started${NC}"
+echo -e "${YELLOW}You can now test your emacs_api tool by asking Claude to use it${NC}"
 
 echo "Press Ctrl+C to stop recording and exit Claude Code"
 echo ""
