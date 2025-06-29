@@ -67,7 +67,7 @@
 ;; Try to load real websocket, otherwise provide comprehensive mocks
 (condition-case nil
     (progn
-      (add-to-list 'load-path (expand-file-name "~/.emacs.d/.cache/straight/build/websocket/"))
+      (add-to-list 'load-path (expand-file-name "~/.doom/straight/build-29.4/websocket/"))
       (require 'websocket))
   (error
    ;; Comprehensive websocket mock implementation
@@ -102,6 +102,13 @@
    ;; Define the structure accessors to avoid free variable warnings
    (defvar websocket-frame nil)
    (cl-defstruct websocket-frame opcode payload)
+   ;; Test-specific websocket mock variables
+   (defvar websocket--test-server nil
+     "Mock server for testing.")
+   (defvar websocket--test-client nil
+     "Mock client for testing.")
+   (defvar websocket--test-port 12345
+     "Mock port for testing.")
    (provide 'websocket)))
 
 ;; === Mock vterm module ===
@@ -145,16 +152,6 @@
     "Mock display-buffer-in-side-window for testing."
     (set-window-buffer (selected-window) buffer)
     (selected-window)))
-
-;; === Additional test-specific websocket mocks ===
-(unless (featurep 'websocket)
-  ;; Only define these if websocket wasn't loaded above
-  (defvar websocket--test-server nil
-    "Mock server for testing.")
-  (defvar websocket--test-client nil
-    "Mock client for testing.")
-  (defvar websocket--test-port 12345
-    "Mock port for testing."))
 
 ;; === Mock flycheck module ===
 ;; Mock flycheck before loading any modules that require it
@@ -1191,6 +1188,233 @@ have completed before cleanup.  Waits up to 5 seconds."
         (ignore-errors (delete-directory project-a t))
         (ignore-errors (delete-directory project-b t))
         (clrhash claude-code-ide-mcp--sessions)))))
+
+;;; WebSocket Integration Tests
+
+(ert-deftest claude-code-ide-test-websocket-integration ()
+  "Test real WebSocket client-server communication for MCP protocol."
+  (skip-unless (and (featurep 'websocket)
+                    (not (boundp 'websocket--test-server))))  ; Skip if mock websocket is active
+  (let* ((temp-dir (make-temp-file "test-ws-integration-" t))
+         (claude-code-ide-mcp--sessions (make-hash-table :test 'equal))
+         (test-port nil)
+         (test-server nil)
+         (test-client nil)
+         (received-messages '())
+         (connection-established nil))
+    
+    (unwind-protect
+        (progn
+          ;; Start MCP server
+          (setq test-port (claude-code-ide-mcp-start temp-dir))
+          (should (numberp test-port))
+          (setq test-server (gethash temp-dir claude-code-ide-mcp--sessions))
+          (should test-server)
+          
+          ;; Wait a moment for server to be ready
+          (sleep-for 0.1)
+          
+          ;; Create WebSocket client to connect to our server
+          (setq test-client 
+                (websocket-open 
+                 (format "ws://localhost:%d" test-port)
+                 :on-open (lambda (_ws) 
+                           (setq connection-established t))
+                 :on-message (lambda (_ws frame)
+                              (let ((message (websocket-frame-text frame)))
+                                (push message received-messages)))
+                 :on-error (lambda (_ws type err)
+                            (message "WebSocket error: %s %s" type err))
+                 :on-close (lambda (_ws)
+                            (message "WebSocket connection closed"))))
+          
+          ;; Wait for connection to establish
+          (let ((max-wait 50)) ; 5 seconds max
+            (while (and (not connection-established) (> max-wait 0))
+              (sleep-for 0.1)
+              (setq max-wait (1- max-wait))))
+          
+          (should connection-established)
+          
+          ;; Send MCP initialization message
+          (let ((init-message (json-encode 
+                               '((jsonrpc . "2.0")
+                                 (id . "init-1")
+                                 (method . "initialize")
+                                 (params . ((protocolVersion . "2024-11-05")
+                                           (capabilities . ((roots . t)))
+                                           (clientInfo . ((name . "test-client")
+                                                         (version . "1.0.0")))))))))
+            (websocket-send-text test-client init-message))
+          
+          ;; Wait for response
+          (let ((max-wait 30)) ; 3 seconds max
+            (while (and (null received-messages) (> max-wait 0))
+              (sleep-for 0.1)
+              (setq max-wait (1- max-wait))))
+          
+          ;; Should have received initialization response
+          (should received-messages)
+          (let* ((response-text (car received-messages))
+                 (response (json-read-from-string response-text)))
+            (should (equal (alist-get 'jsonrpc response) "2.0"))
+            (should (equal (alist-get 'id response) "init-1"))
+            (should (alist-get 'result response)))
+          
+          ;; Clear received messages for next test
+          (setq received-messages nil)
+          
+          ;; Test tool call - openFile with a temporary file
+          (let* ((test-file (make-temp-file "ws-test-" nil ".txt" "Test content\nLine 2\nLine 3"))
+                 (tool-message (json-encode 
+                                `((jsonrpc . "2.0")
+                                  (id . "tool-1")
+                                  (method . "tools/call")
+                                  (params . ((name . "openFile")
+                                            (arguments . ((path . ,test-file)))))))))
+            (websocket-send-text test-client tool-message)
+            
+            ;; Wait for tool response
+            (let ((max-wait 30)) ; 3 seconds max
+              (while (and (null received-messages) (> max-wait 0))
+                (sleep-for 0.1)
+                (setq max-wait (1- max-wait))))
+            
+            ;; Should have received tool response
+            (should received-messages)
+            (let* ((response-text (car received-messages))
+                   (response (json-read-from-string response-text)))
+              (should (equal (alist-get 'jsonrpc response) "2.0"))
+              (should (equal (alist-get 'id response) "tool-1"))
+              (should (alist-get 'result response))
+              (let ((result (alist-get 'result response)))
+                (should (alist-get 'content result))
+                (should (vectorp (alist-get 'content result)))
+                ;; Should have at least one content item
+                (should (> (length (alist-get 'content result)) 0))))
+            
+            ;; Cleanup test file
+            (delete-file test-file))
+          
+          ;; Test list tools call
+          (setq received-messages nil)
+          (let ((tools-message (json-encode 
+                                '((jsonrpc . "2.0")
+                                  (id . "tools-1")
+                                  (method . "tools/list")))))
+            (websocket-send-text test-client tools-message)
+            
+            ;; Wait for tools list response
+            (let ((max-wait 30)) ; 3 seconds max
+              (while (and (null received-messages) (> max-wait 0))
+                (sleep-for 0.1)
+                (setq max-wait (1- max-wait))))
+            
+            ;; Should have received tools list
+            (should received-messages)
+            (let* ((response-text (car received-messages))
+                   (response (json-read-from-string response-text)))
+              (should (equal (alist-get 'jsonrpc response) "2.0"))
+              (should (equal (alist-get 'id response) "tools-1"))
+              (should (alist-get 'result response))
+              (let ((result (alist-get 'result response)))
+                (should (alist-get 'tools result))
+                (should (vectorp (alist-get 'tools result)))
+                ;; Should have multiple tools
+                (should (> (length (alist-get 'tools result)) 5))
+                ;; Should include openFile tool
+                (let ((tool-names (mapcar (lambda (tool) (alist-get 'name tool))
+                                         (append (alist-get 'tools result) nil))))
+                  (should (member "openFile" tool-names))
+                  (should (member "getCurrentSelection" tool-names))
+                  (should (member "getOpenEditors" tool-names)))))))
+      
+      ;; Cleanup
+      (when test-client
+        (websocket-close test-client))
+      (when test-server
+        (claude-code-ide-mcp-stop-session temp-dir))
+      (when (file-exists-p temp-dir)
+        (delete-directory temp-dir t)))))
+
+(ert-deftest claude-code-ide-test-websocket-error-handling ()
+  "Test WebSocket error handling and invalid message processing."
+  (skip-unless (and (featurep 'websocket)
+                    (not (boundp 'websocket--test-server))))  ; Skip if mock websocket is active
+  (let* ((temp-dir (make-temp-file "test-ws-error-" t))
+         (claude-code-ide-mcp--sessions (make-hash-table :test 'equal))
+         (test-port nil)
+         (test-client nil)
+         (received-messages '())
+         (connection-established nil))
+    
+    (unwind-protect
+        (progn
+          ;; Start MCP server
+          (setq test-port (claude-code-ide-mcp-start temp-dir))
+          (should (numberp test-port))
+          
+          ;; Wait a moment for server to be ready
+          (sleep-for 0.1)
+          
+          ;; Create WebSocket client
+          (setq test-client 
+                (websocket-open 
+                 (format "ws://localhost:%d" test-port)
+                 :on-open (lambda (_ws) 
+                           (setq connection-established t))
+                 :on-message (lambda (_ws frame)
+                              (let ((message (websocket-frame-text frame)))
+                                (push message received-messages)))))
+          
+          ;; Wait for connection
+          (let ((max-wait 50))
+            (while (and (not connection-established) (> max-wait 0))
+              (sleep-for 0.1)
+              (setq max-wait (1- max-wait))))
+          
+          (should connection-established)
+          
+          ;; Test invalid JSON
+          (websocket-send-text test-client "invalid json {")
+          (sleep-for 0.2)
+          
+          ;; Test missing required fields
+          (websocket-send-text test-client "{\"jsonrpc\": \"2.0\"}")
+          (sleep-for 0.2)
+          
+          ;; Test invalid tool call
+          (let ((invalid-tool (json-encode 
+                               '((jsonrpc . "2.0")
+                                 (id . "invalid-1")
+                                 (method . "tools/call")
+                                 (params . ((name . "nonexistentTool")))))))
+            (websocket-send-text test-client invalid-tool))
+          
+          ;; Wait for error response
+          (let ((max-wait 30))
+            (while (and (null received-messages) (> max-wait 0))
+              (sleep-for 0.1)
+              (setq max-wait (1- max-wait))))
+          
+          ;; Should have received error response for invalid tool
+          (should (= (length received-messages) 1))
+          (let* ((response-text (car received-messages))
+                 (response (json-read-from-string response-text)))
+            (should (equal (alist-get 'jsonrpc response) "2.0"))
+            (should (equal (alist-get 'id response) "invalid-1"))
+            (should (alist-get 'error response))
+            (let ((error (alist-get 'error response)))
+              (should (alist-get 'code error))
+              (should (alist-get 'message error)))))
+      
+      ;; Cleanup
+      (when test-client
+        (websocket-close test-client))
+      (when (gethash temp-dir claude-code-ide-mcp--sessions)
+        (claude-code-ide-mcp-stop-session temp-dir))
+      (when (file-exists-p temp-dir)
+        (delete-directory temp-dir t)))))
 
 (provide 'claude-code-ide-tests)
 
