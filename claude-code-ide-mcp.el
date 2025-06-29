@@ -659,7 +659,7 @@ Optional SESSION contains the MCP session context."
 
 ;;; Public API
 
-(defun claude-code-ide-mcp-start (&optional project-directory)
+(defun claude-code-ide-mcp-start (&optional project-directory global)
   "Start the MCP server for PROJECT-DIRECTORY."
   (claude-code-ide-debug "=== Starting MCP server ===")
 
@@ -693,11 +693,16 @@ Optional SESSION contains the MCP session context."
         (claude-code-ide-debug "Project directory: %s" project-dir)
         (claude-code-ide-debug "Creating lockfile for port %d" port)
         (claude-code-ide-mcp--create-lockfile port project-dir)
+        (when global
+          (setenv "CLAUDE_CODE_SSE_PORT" port)
+          (setenv "ENABLE_IDE_INTEGRATION" "true")
+          (setenv "TERM_PROGRAM" "emacs")
+          (setenv "FORCE_CODE_TERMINAL" "true"))
 
         ;; Set up hooks for selection and buffer tracking
         ;; Too expensive
         ;; (add-hook 'post-command-hook #'claude-code-ide-mcp--track-selection)
-        (add-hook 'window-buffer-change-functions #'claude-code-ide-mcp--track-active-buffer)
+        ;; (add-hook 'post-command-hook #'claude-code-ide-mcp--track-active-buffer)
 
         (claude-code-ide-debug "MCP server ready on port %d" port)
         (claude-code-ide-debug "MCP server started on port %d for %s" port
@@ -731,7 +736,8 @@ Optional SESSION contains the MCP session context."
     (when (= 0 (hash-table-count claude-code-ide-mcp--sessions))
       ;; Too expensive
       ;; (remove-hook 'post-command-hook #'claude-code-ide-mcp--track-selection)
-      (remove-hook 'window-buffer-change-functions #'claude-code-ide-mcp--track-active-buffer))
+      ;; (remove-hook 'post-command-hook #'claude-code-ide-mcp--track-active-buffer)
+      )
 
     (claude-code-ide-debug "MCP server stopped for %s"
                            (file-name-nondirectory (directory-file-name project-dir)))))
