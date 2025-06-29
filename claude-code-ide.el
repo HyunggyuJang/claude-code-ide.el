@@ -280,20 +280,23 @@ If `claude-code-ide-cli-debug' is non-nil, add the -d flag."
       (setq claude-cmd (concat claude-cmd " -r")))
     claude-cmd))
 
-(defun claude-code-ide--create-vterm-session (buffer-name working-dir port resume)
+(defun claude-code-ide--create-vterm-session (buffer-name working-dir port resume &optional terminal-only)
   "Create a new vterm session for Claude Code.
 BUFFER-NAME is the name for the vterm buffer.
 WORKING-DIR is the working directory.
 PORT is the MCP server port.
 RESUME is whether to resume a previous conversation.
+TERMINAL-ONLY is whether to start just the terminal without auto-launching Claude.
 
 Returns a cons cell of (buffer . process) on success.
 Signals an error if vterm fails to initialize."
   (let* ((claude-cmd (claude-code-ide--build-claude-command resume))
          (vterm-buffer-name buffer-name)
          (default-directory working-dir)
-         ;; Set vterm-shell to run Claude directly instead of a shell
-         (vterm-shell claude-cmd)
+         ;; Set vterm-shell based on terminal-only mode
+         (vterm-shell (if terminal-only
+                          (or (getenv "SHELL") "/bin/bash")  ; Use default shell for terminal-only
+                          claude-cmd))  ; Auto-launch Claude for normal mode
          ;; vterm uses vterm-environment for passing env vars
          (vterm-environment (append
                              (list (format "CLAUDE_CODE_SSE_PORT=%d" port)
@@ -316,9 +319,10 @@ Signals an error if vterm fails to initialize."
           (error "Vterm buffer was killed during initialization"))
         (cons buffer process)))))
 
-(defun claude-code-ide--start-session (&optional resume)
+(defun claude-code-ide--start-session (&optional resume terminal-only)
   "Start a Claude Code session for the current project.
 If RESUME is non-nil, start Claude with the -r (resume) flag.
+If TERMINAL-ONLY is non-nil, start just the terminal without auto-launching Claude.
 
 This function handles:
 - CLI availability checking
@@ -326,7 +330,7 @@ This function handles:
 - Existing session detection and window toggling
 - New session creation with MCP server setup
 - Process and buffer lifecycle management"
-  (unless (claude-code-ide--ensure-cli)
+  (unless (or terminal-only (claude-code-ide--ensure-cli))
     (user-error "Claude Code CLI not available.  Please install it and ensure it's in PATH"))
 
   (unless (fboundp 'vterm)
@@ -352,7 +356,7 @@ This function handles:
       (let ((port (claude-code-ide-mcp-start working-dir)))
         ;; Create new vterm session
         (let* ((buffer-and-process (claude-code-ide--create-vterm-session
-                                    buffer-name working-dir port resume))
+                                    buffer-name working-dir port resume terminal-only))
                (buffer (car buffer-and-process))
                (process (cdr buffer-and-process)))
           (claude-code-ide--set-process process working-dir)
@@ -379,11 +383,16 @@ This function handles:
                       nil t))
           ;; Display the buffer in a side window
           (claude-code-ide--display-buffer-in-side-window buffer)
-          (claude-code-ide-log "Claude Code %sstarted in %s with MCP on port %d%s"
-                               (if resume "resumed and " "")
-                               (file-name-nondirectory (directory-file-name working-dir))
-                               port
-                               (if claude-code-ide-cli-debug " (debug mode enabled)" "")))))))
+          (if terminal-only
+              (claude-code-ide-log "Terminal opened for %s with MCP on port %d%s"
+                                   (file-name-nondirectory (directory-file-name working-dir))
+                                   port
+                                   (if claude-code-ide-cli-debug " (debug mode enabled)" ""))
+            (claude-code-ide-log "Claude Code %sstarted in %s with MCP on port %d%s"
+                                 (if resume "resumed and " "")
+                                 (file-name-nondirectory (directory-file-name working-dir))
+                                 port
+                                 (if claude-code-ide-cli-debug " (debug mode enabled)" ""))))))))
 
 ;;;###autoload
 (defun claude-code-ide ()
@@ -398,6 +407,14 @@ This starts Claude with the -r (resume) flag to continue the previous
 conversation."
   (interactive)
   (claude-code-ide--start-session t))
+
+;;;###autoload
+(defun claude-code-ide-terminal ()
+  "Open a terminal with Claude Code environment setup but don't auto-launch Claude.
+Like VS Code extension - user can manually start Claude when ready.
+The MCP server is started and environment variables are set up."
+  (interactive)
+  (claude-code-ide--start-session nil t))
 
 ;;;###autoload
 (defun claude-code-ide-check-status ()

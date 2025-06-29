@@ -1490,6 +1490,429 @@ have completed before cleanup.  Waits up to 5 seconds."
       (when (file-exists-p temp-dir)
         (delete-directory temp-dir t)))))
 
+;;; Phase 2: Terminal-Only Mode Tests
+
+(ert-deftest claude-code-ide-test-terminal-command-exists ()
+  "Test that claude-code-ide-terminal command exists and is interactive."
+  (should (fboundp 'claude-code-ide-terminal))
+  (should (commandp 'claude-code-ide-terminal)))
+
+(ert-deftest claude-code-ide-test-terminal-mode-no-auto-claude ()
+  "Test that terminal mode starts MCP server but doesn't auto-launch Claude."
+  (let* ((temp-dir (make-temp-file "test-terminal-mode-" t))
+         (claude-code-ide-mcp--sessions (make-hash-table :test 'equal))
+         (claude-code-ide--process-table (make-hash-table :test 'equal))
+         (vterm-buffer nil)
+         (vterm-process nil)
+         (created-buffers '()))
+    
+    (unwind-protect
+        ;; Mock vterm creation to capture what command would be run
+        (cl-letf* (((symbol-function 'vterm)
+                    (lambda (&optional _buffer-name)
+                      (let ((buffer (generate-new-buffer "*claude-code-ide-test*")))
+                        (push buffer created-buffers)
+                        (setq vterm-buffer buffer)
+                        buffer)))
+                   ((symbol-function 'vterm-send-string) #'ignore)
+                   ((symbol-function 'vterm-send-return) #'ignore)
+                   ((symbol-function 'get-buffer-process)
+                    (lambda (_buffer)
+                      (setq vterm-process (make-process :name "test-shell" 
+                                                      :command '("sleep" "1")))
+                      vterm-process))
+                   ((symbol-function 'claude-code-ide--display-buffer-in-side-window) #'ignore)
+                   (claude-code-ide-cli-debug nil))
+          
+          ;; Call terminal mode
+          (let ((default-directory temp-dir))
+            (claude-code-ide-terminal))
+          
+          ;; Should have started MCP server
+          (should (gethash temp-dir claude-code-ide-mcp--sessions))
+          
+          ;; Should have created vterm buffer
+          (should vterm-buffer)
+          (should (buffer-live-p vterm-buffer))
+          
+          ;; Should have vterm process (shell, not Claude)
+          (should vterm-process)
+          
+          ;; Should NOT have tracked the process as Claude process
+          ;; (because it's just a shell, not Claude CLI)
+          (should-not (gethash temp-dir claude-code-ide--process-table)))
+      
+      ;; Cleanup
+      (when vterm-process
+        (delete-process vterm-process))
+      (dolist (buffer created-buffers)
+        (when (buffer-live-p buffer)
+          (kill-buffer buffer)))
+      (when (gethash temp-dir claude-code-ide-mcp--sessions)
+        (claude-code-ide-mcp-stop-session temp-dir))
+      (when (file-exists-p temp-dir)
+        (delete-directory temp-dir t)))))
+
+(ert-deftest claude-code-ide-test-terminal-mode-environment-setup ()
+  "Test that terminal mode sets up proper environment variables."
+  (let* ((temp-dir (make-temp-file "test-terminal-env-" t))
+         (claude-code-ide-mcp--sessions (make-hash-table :test 'equal))
+         (captured-environment nil)
+         (created-buffers '()))
+    
+    (unwind-protect
+        ;; Mock vterm to capture environment
+        (cl-letf* (((symbol-function 'vterm)
+                    (lambda (&optional _buffer-name)
+                      ;; Capture vterm-environment when vterm is called
+                      (setq captured-environment vterm-environment)
+                      (let ((buffer (generate-new-buffer "*claude-code-ide-test*")))
+                        (push buffer created-buffers)
+                        buffer)))
+                   ((symbol-function 'vterm-send-string) #'ignore)
+                   ((symbol-function 'vterm-send-return) #'ignore)
+                   ((symbol-function 'get-buffer-process)
+                    (lambda (_buffer)
+                      (make-process :name "test-shell" :command '("sleep" "1"))))
+                   ((symbol-function 'claude-code-ide--display-buffer-in-side-window) #'ignore))
+          
+          ;; Call terminal mode
+          (let ((default-directory temp-dir))
+            (claude-code-ide-terminal))
+          
+          ;; Should have set environment variables
+          (should captured-environment)
+          (should (cl-some (lambda (env) (string-match "CLAUDE_CODE_SSE_PORT=" env))
+                          captured-environment))
+          (should (member "ENABLE_IDE_INTEGRATION=true" captured-environment))
+          (should (member "TERM_PROGRAM=emacs" captured-environment))
+          (should (member "FORCE_CODE_TERMINAL=true" captured-environment)))
+      
+      ;; Cleanup
+      (dolist (buffer created-buffers)
+        (when (buffer-live-p buffer)
+          (kill-buffer buffer)))
+      (when (gethash temp-dir claude-code-ide-mcp--sessions)
+        (claude-code-ide-mcp-stop-session temp-dir))
+      (when (file-exists-p temp-dir)
+        (delete-directory temp-dir t)))))
+
+(ert-deftest claude-code-ide-test-terminal-mode-shell-command ()
+  "Test that terminal mode starts shell instead of Claude CLI."
+  (let* ((temp-dir (make-temp-file "test-terminal-shell-" t))
+         (claude-code-ide-mcp--sessions (make-hash-table :test 'equal))
+         (captured-shell-command nil)
+         (created-buffers '()))
+    
+    (unwind-protect
+        ;; Mock vterm to capture what shell command is used
+        (cl-letf* (((symbol-function 'vterm)
+                    (lambda (&optional _buffer-name)
+                      ;; Capture vterm-shell when vterm is called
+                      (setq captured-shell-command vterm-shell)
+                      (let ((buffer (generate-new-buffer "*claude-code-ide-test*")))
+                        (push buffer created-buffers)
+                        buffer)))
+                   ((symbol-function 'vterm-send-string) #'ignore)
+                   ((symbol-function 'vterm-send-return) #'ignore)
+                   ((symbol-function 'get-buffer-process)
+                    (lambda (_buffer)
+                      (make-process :name "test-shell" :command '("sleep" "1"))))
+                   ((symbol-function 'claude-code-ide--display-buffer-in-side-window) #'ignore))
+          
+          ;; Call terminal mode
+          (let ((default-directory temp-dir))
+            (claude-code-ide-terminal))
+          
+          ;; Should use shell, not Claude CLI
+          (should captured-shell-command)
+          (should-not (string-match "claude-code" captured-shell-command))
+          ;; Should be a shell path
+          (should (or (string-match "/bin/bash" captured-shell-command)
+                     (string-match "/bin/zsh" captured-shell-command)
+                     (string-match "/bin/sh" captured-shell-command))))
+      
+      ;; Cleanup
+      (dolist (buffer created-buffers)
+        (when (buffer-live-p buffer)
+          (kill-buffer buffer)))
+      (when (gethash temp-dir claude-code-ide-mcp--sessions)
+        (claude-code-ide-mcp-stop-session temp-dir))
+      (when (file-exists-p temp-dir)
+        (delete-directory temp-dir t)))))
+
+(ert-deftest claude-code-ide-test-terminal-mode-instructions ()
+  "Test that terminal mode provides user instructions for starting Claude."
+  (let* ((temp-dir (make-temp-file "test-terminal-instructions-" t))
+         (claude-code-ide-mcp--sessions (make-hash-table :test 'equal))
+         (sent-strings '())
+         (created-buffers '()))
+    
+    (unwind-protect
+        ;; Mock vterm to capture instructions sent to terminal
+        (cl-letf* (((symbol-function 'vterm)
+                    (lambda (&optional _buffer-name)
+                      (let ((buffer (generate-new-buffer "*claude-code-ide-test*")))
+                        (push buffer created-buffers)
+                        buffer)))
+                   ((symbol-function 'vterm-send-string)
+                    (lambda (string)
+                      (push string sent-strings)))
+                   ((symbol-function 'vterm-send-return) #'ignore)
+                   ((symbol-function 'get-buffer-process)
+                    (lambda (_buffer)
+                      (make-process :name "test-shell" :command '("sleep" "1"))))
+                   ((symbol-function 'claude-code-ide--display-buffer-in-side-window) #'ignore))
+          
+          ;; Call terminal mode
+          (let ((default-directory temp-dir))
+            (claude-code-ide-terminal))
+          
+          ;; Should have sent instructions to terminal
+          (should sent-strings)
+          (let ((all-instructions (mapconcat 'identity sent-strings "")))
+            ;; Should mention MCP port
+            (should (string-match "MCP server running on port" all-instructions))
+            ;; Should provide Claude start command
+            (should (string-match "claude-code" all-instructions))
+            ;; Should mention environment variables
+            (should (string-match "Environment.*CLAUDE_CODE_SSE_PORT" all-instructions))))
+      
+      ;; Cleanup
+      (dolist (buffer created-buffers)
+        (when (buffer-live-p buffer)
+          (kill-buffer buffer)))
+      (when (gethash temp-dir claude-code-ide-mcp--sessions)
+        (claude-code-ide-mcp-stop-session temp-dir))
+      (when (file-exists-p temp-dir)
+        (delete-directory temp-dir t)))))
+
+;;; Phase 2 Tests - Terminal-Only Mode
+
+(ert-deftest claude-code-ide-test-terminal-only-command-exists ()
+  "Test that the terminal-only command is defined."
+  (should (fboundp 'claude-code-ide-terminal)))
+
+(ert-deftest claude-code-ide-test-terminal-only-mode-no-auto-launch ()
+  "Test that terminal-only mode doesn't auto-launch Claude."
+  (let* ((temp-dir (make-temp-file "test-terminal-only-" t))
+         (claude-code-ide--processes (make-hash-table :test 'equal))
+         (claude-code-ide-mcp--sessions (make-hash-table :test 'equal))
+         (buffer-name "*Claude Code Terminal*")
+         captured-vterm-shell
+         captured-environment)
+    
+    ;; Mock vterm to capture what command it would run
+    (cl-letf (((symbol-function 'vterm)
+               (lambda ()
+                 (setq captured-vterm-shell vterm-shell)
+                 (setq captured-environment vterm-environment)
+                 ;; Create a mock buffer that looks like vterm
+                 (let ((buffer (generate-new-buffer buffer-name)))
+                   (with-current-buffer buffer
+                     (setq major-mode 'vterm-mode)
+                     ;; Mock vterm process
+                     (let ((mock-process (make-network-process 
+                                         :name "mock-vterm" 
+                                         :buffer buffer
+                                         :family 'local
+                                         :service t
+                                         :server nil)))
+                       (set-process-query-on-exit-flag mock-process nil)))
+                   buffer)))
+              ((symbol-function 'vterm-send-string) 'ignore)
+              ((symbol-function 'vterm-send-return) 'ignore)
+              ((symbol-function 'claude-code-ide--display-buffer-in-side-window) 'ignore)
+              ((symbol-function 'claude-code-ide-mcp-start)
+               (lambda (_) 12345))  ; Return mock port
+              ((symbol-function 'set-process-sentinel) 'ignore)
+              (vterm-shell nil)
+              (vterm-environment nil))
+      
+      (unwind-protect
+          (progn
+            ;; Test terminal-only mode
+            (let ((default-directory temp-dir))
+              (claude-code-ide--start-session nil t))  ; terminal-only = t
+            
+            ;; Should use shell, not Claude command
+            (should captured-vterm-shell)
+            (should (or (string-match-p "/bin/bash" captured-vterm-shell)
+                        (string-match-p "/.*sh" captured-vterm-shell)))
+            (should-not (string-match-p "claude-code" captured-vterm-shell))
+            
+            ;; Environment should still be set for manual Claude launch
+            (should (member "ENABLE_IDE_INTEGRATION=true" captured-environment))
+            (should (cl-some (lambda (env) (string-match-p "CLAUDE_CODE_SSE_PORT=" env)) 
+                            captured-environment)))
+        
+        ;; Cleanup
+        (when (get-buffer buffer-name)
+          (kill-buffer buffer-name))
+        (delete-directory temp-dir t)))))
+
+(ert-deftest claude-code-ide-test-normal-mode-auto-launches-claude ()
+  "Test that normal mode auto-launches Claude (current behavior)."
+  (let* ((temp-dir (make-temp-file "test-normal-mode-" t))
+         (claude-code-ide--processes (make-hash-table :test 'equal))
+         (claude-code-ide-mcp--sessions (make-hash-table :test 'equal))
+         (buffer-name "*Claude Code*")
+         captured-vterm-shell)
+    
+    ;; Mock vterm to capture what command it would run
+    (cl-letf (((symbol-function 'vterm)
+               (lambda ()
+                 (setq captured-vterm-shell vterm-shell)
+                 ;; Create a mock buffer that looks like vterm
+                 (let ((buffer (generate-new-buffer buffer-name)))
+                   (with-current-buffer buffer
+                     (setq major-mode 'vterm-mode)
+                     ;; Mock vterm process
+                     (let ((mock-process (make-network-process 
+                                         :name "mock-vterm" 
+                                         :buffer buffer
+                                         :family 'local
+                                         :service t
+                                         :server nil)))
+                       (set-process-query-on-exit-flag mock-process nil)))
+                   buffer)))
+              ((symbol-function 'claude-code-ide--display-buffer-in-side-window) 'ignore)
+              ((symbol-function 'claude-code-ide-mcp-start)
+               (lambda (_) 12345))  ; Return mock port
+              ((symbol-function 'set-process-sentinel) 'ignore)
+              ((symbol-function 'claude-code-ide--ensure-cli)
+               (lambda () t))  ; Mock CLI as available
+              (vterm-shell nil))
+      
+      (unwind-protect
+          (progn
+            ;; Test normal mode (no terminal-only)
+            (let ((default-directory temp-dir))
+              (claude-code-ide--start-session nil nil))  ; terminal-only = nil
+            
+            ;; Should use Claude command, not shell
+            (should captured-vterm-shell)
+            (should (string-match-p "claude-code" captured-vterm-shell)))
+        
+        ;; Cleanup
+        (when (get-buffer buffer-name)
+          (kill-buffer buffer-name))
+        (delete-directory temp-dir t)))))
+
+(ert-deftest claude-code-ide-test-terminal-only-no-cli-required ()
+  "Test that terminal-only mode doesn't require Claude CLI to be installed."
+  (let* ((temp-dir (make-temp-file "test-no-cli-" t))
+         (claude-code-ide--processes (make-hash-table :test 'equal))
+         (claude-code-ide-mcp--sessions (make-hash-table :test 'equal))
+         (buffer-name "*Claude Code Terminal*"))
+    
+    ;; Mock vterm and make CLI unavailable
+    (cl-letf (((symbol-function 'vterm)
+               (lambda ()
+                 ;; Create a mock buffer that looks like vterm
+                 (let ((buffer (generate-new-buffer buffer-name)))
+                   (with-current-buffer buffer
+                     (setq major-mode 'vterm-mode)
+                     ;; Mock vterm process
+                     (let ((mock-process (make-network-process 
+                                         :name "mock-vterm" 
+                                         :buffer buffer
+                                         :family 'local
+                                         :service t
+                                         :server nil)))
+                       (set-process-query-on-exit-flag mock-process nil)))
+                   buffer)))
+              ((symbol-function 'vterm-send-string) 'ignore)
+              ((symbol-function 'vterm-send-return) 'ignore)
+              ((symbol-function 'claude-code-ide--display-buffer-in-side-window) 'ignore)
+              ((symbol-function 'claude-code-ide-mcp-start)
+               (lambda (_) 12345))  ; Return mock port
+              ((symbol-function 'set-process-sentinel) 'ignore)
+              ((symbol-function 'claude-code-ide--ensure-cli)
+               (lambda () nil)))  ; Mock CLI as NOT available
+      
+      (unwind-protect
+          (progn
+            ;; Terminal-only mode should work even without CLI
+            (let ((default-directory temp-dir))
+              (should-not-error (claude-code-ide--start-session nil t)))
+            
+            ;; Should have created the buffer
+            (should (get-buffer buffer-name)))
+        
+        ;; Cleanup
+        (when (get-buffer buffer-name)
+          (kill-buffer buffer-name))
+        (delete-directory temp-dir t)))))
+
+(ert-deftest claude-code-ide-test-normal-mode-requires-cli ()
+  "Test that normal mode fails without Claude CLI."
+  (let* ((temp-dir (make-temp-file "test-cli-required-" t))
+         (claude-code-ide--processes (make-hash-table :test 'equal))
+         (claude-code-ide-mcp--sessions (make-hash-table :test 'equal)))
+    
+    ;; Mock CLI as unavailable
+    (cl-letf (((symbol-function 'claude-code-ide--ensure-cli)
+               (lambda () nil)))  ; Mock CLI as NOT available
+      
+      (unwind-protect
+          (progn
+            ;; Normal mode should fail without CLI
+            (let ((default-directory temp-dir))
+              (should-error (claude-code-ide--start-session nil nil)
+                           :type 'user-error)))
+        
+        ;; Cleanup
+        (delete-directory temp-dir t)))))
+
+(ert-deftest claude-code-ide-test-terminal-only-logging-message ()
+  "Test that terminal-only mode shows appropriate log message."
+  (let* ((temp-dir (make-temp-file "test-terminal-logging-" t))
+         (claude-code-ide--processes (make-hash-table :test 'equal))
+         (claude-code-ide-mcp--sessions (make-hash-table :test 'equal))
+         (buffer-name "*Claude Code Terminal*")
+         captured-log-message)
+    
+    ;; Mock functions and capture log message
+    (cl-letf (((symbol-function 'vterm)
+               (lambda ()
+                 (let ((buffer (generate-new-buffer buffer-name)))
+                   (with-current-buffer buffer
+                     (setq major-mode 'vterm-mode)
+                     (let ((mock-process (make-network-process 
+                                         :name "mock-vterm" 
+                                         :buffer buffer
+                                         :family 'local
+                                         :service t
+                                         :server nil)))
+                       (set-process-query-on-exit-flag mock-process nil)))
+                   buffer)))
+              ((symbol-function 'vterm-send-string) 'ignore)
+              ((symbol-function 'vterm-send-return) 'ignore)
+              ((symbol-function 'claude-code-ide--display-buffer-in-side-window) 'ignore)
+              ((symbol-function 'claude-code-ide-mcp-start)
+               (lambda (_) 12345))  ; Return mock port
+              ((symbol-function 'set-process-sentinel) 'ignore)
+              ((symbol-function 'claude-code-ide-log)
+               (lambda (format-str &rest args)
+                 (setq captured-log-message (apply 'format format-str args)))))
+      
+      (unwind-protect
+          (progn
+            ;; Test terminal-only mode
+            (let ((default-directory temp-dir))
+              (claude-code-ide--start-session nil t))  ; terminal-only = t
+            
+            ;; Should show terminal-specific log message
+            (should captured-log-message)
+            (should (string-match-p "Terminal opened" captured-log-message))
+            (should-not (string-match-p "started" captured-log-message)))
+        
+        ;; Cleanup
+        (when (get-buffer buffer-name)
+          (kill-buffer buffer-name))
+        (delete-directory temp-dir t)))))
+
 (provide 'claude-code-ide-tests)
 
 ;;; claude-code-ide-tests.el ends here

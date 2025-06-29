@@ -635,7 +635,7 @@ Optional SESSION contains the MCP session context."
               (session (claude-code-ide-mcp--get-session-for-project project-dir)))
     (claude-code-ide-mcp--send-selection-for-project project-dir)))
 
-(defun claude-code-ide-mcp--track-active-buffer ()
+(defun claude-code-ide-mcp--track-active-buffer (&optional _)
   "Track active buffer changes and notify Claude for the current buffer's project."
   (let ((current-buffer (current-buffer))
         (file-path (buffer-file-name)))
@@ -695,8 +695,9 @@ Optional SESSION contains the MCP session context."
         (claude-code-ide-mcp--create-lockfile port project-dir)
 
         ;; Set up hooks for selection and buffer tracking
-        (add-hook 'post-command-hook #'claude-code-ide-mcp--track-selection)
-        (add-hook 'post-command-hook #'claude-code-ide-mcp--track-active-buffer)
+        ;; Too expensive
+        ;; (add-hook 'post-command-hook #'claude-code-ide-mcp--track-selection)
+        (add-hook 'window-buffer-change-functions #'claude-code-ide-mcp--track-active-buffer)
 
         (claude-code-ide-debug "MCP server ready on port %d" port)
         (claude-code-ide-debug "MCP server started on port %d for %s" port
@@ -728,8 +729,9 @@ Optional SESSION contains the MCP session context."
 
     ;; Remove hooks if no more sessions
     (when (= 0 (hash-table-count claude-code-ide-mcp--sessions))
-      (remove-hook 'post-command-hook #'claude-code-ide-mcp--track-selection)
-      (remove-hook 'post-command-hook #'claude-code-ide-mcp--track-active-buffer))
+      ;; Too expensive
+      ;; (remove-hook 'post-command-hook #'claude-code-ide-mcp--track-selection)
+      (remove-hook 'window-buffer-change-functions #'claude-code-ide-mcp--track-active-buffer))
 
     (claude-code-ide-debug "MCP server stopped for %s"
                            (file-name-nondirectory (directory-file-name project-dir)))))
