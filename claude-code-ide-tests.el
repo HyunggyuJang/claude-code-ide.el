@@ -153,6 +153,96 @@
     (set-window-buffer (selected-window) buffer)
     (selected-window)))
 
+;;; emacs_api Tool Tests (TDD Phase 1)
+
+(ert-deftest claude-code-ide-test-emacs-api-registration ()
+  "Test that emacs_api tool is properly registered in MCP handlers."
+  (require 'claude-code-ide-mcp-handlers)
+  ;; Test tool is in tools registry
+  (should (assoc "emacs_api" claude-code-ide-mcp-tools))
+  ;; Test tool has schema
+  (should (assoc "emacs_api" claude-code-ide-mcp-tool-schemas))
+  ;; Test tool has description  
+  (should (assoc "emacs_api" claude-code-ide-mcp-tool-descriptions))
+  ;; Test handler function exists
+  (let ((handler (cdr (assoc "emacs_api" claude-code-ide-mcp-tools))))
+    (should (functionp handler))))
+
+(ert-deftest claude-code-ide-test-emacs-api-simple-eval ()
+  "Test basic Emacs Lisp evaluation with simple expressions."
+  (require 'claude-code-ide-mcp-handlers)
+  (let* ((handler (cdr (assoc "emacs_api" claude-code-ide-mcp-tools)))
+         (params '((functionBody . "(+ 2 3)")))
+         (result (funcall handler params)))
+    (should result)
+    (should (alist-get 'content result))
+    (should (vectorp (alist-get 'content result)))
+    (let* ((content-items (alist-get 'content result))
+           (first-item (aref content-items 0)))
+      (should (equal (alist-get 'type first-item) "text"))
+      ;; The result should contain the evaluation result
+      (should (string-match-p "5" (alist-get 'text first-item))))))
+
+(ert-deftest claude-code-ide-test-emacs-api-buffer-ops ()
+  "Test emacs_api with buffer operations."
+  (require 'claude-code-ide-mcp-handlers)
+  (let* ((handler (cdr (assoc "emacs_api" claude-code-ide-mcp-tools)))
+         (params '((functionBody . "(buffer-name (current-buffer))")))
+         (result (funcall handler params)))
+    (should result)
+    (should (alist-get 'content result))
+    (let* ((content-items (alist-get 'content result))
+           (first-item (aref content-items 0)))
+      (should (equal (alist-get 'type first-item) "text"))
+      ;; Should return some buffer name
+      (should (stringp (alist-get 'text first-item)))
+      (should (> (length (alist-get 'text first-item)) 0)))))
+
+(ert-deftest claude-code-ide-test-emacs-api-error-handling ()
+  "Test emacs_api error handling for invalid Lisp code."
+  (require 'claude-code-ide-mcp-handlers)
+  (let* ((handler (cdr (assoc "emacs_api" claude-code-ide-mcp-tools)))
+         (params '((functionBody . "(undefined-function)")))
+         (result (condition-case err
+                     (funcall handler params)
+                   (error err))))
+    ;; Should return an error or error-formatted content
+    (should result)
+    (if (listp result)
+        ;; If it's an error condition, should have error info
+        (should (stringp (cadr result)))
+      ;; If it's a normal result, should contain error information in content
+      (progn
+        (should (alist-get 'content result))
+        (let* ((content-items (alist-get 'content result))
+               (first-item (aref content-items 0)))
+          (should (equal (alist-get 'type first-item) "text"))
+          ;; Should mention the error somehow
+          (should (string-match-p "error\\|Error\\|undefined" (alist-get 'text first-item))))))))
+
+(ert-deftest claude-code-ide-test-emacs-api-invalid-params ()
+  "Test emacs_api with invalid parameters."
+  (require 'claude-code-ide-mcp-handlers)
+  (let* ((handler (cdr (assoc "emacs_api" claude-code-ide-mcp-tools)))
+         ;; Missing functionBody parameter
+         (params '())
+         (result (condition-case err
+                     (funcall handler params)
+                   (error err))))
+    ;; Should signal an error for missing required parameter
+    (should result)
+    (if (listp result)
+        ;; If it's an error condition
+        (should (stringp (cadr result)))
+      ;; If it's a result with error content
+      (progn
+        (should (alist-get 'content result))
+        (let* ((content-items (alist-get 'content result))
+               (first-item (aref content-items 0)))
+          (should (equal (alist-get 'type first-item) "text"))
+          ;; Should mention the missing parameter
+          (should (string-match-p "functionBody\\|parameter\\|required" (alist-get 'text first-item))))))))
+
 ;; === Mock flycheck module ===
 ;; Mock flycheck before loading any modules that require it
 (defvar flycheck-mode nil
