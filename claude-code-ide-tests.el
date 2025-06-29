@@ -175,10 +175,8 @@
          (params '((functionBody . "(+ 2 3)")))
          (result (funcall handler params)))
     (should result)
-    (should (alist-get 'content result))
-    (should (vectorp (alist-get 'content result)))
-    (let* ((content-items (alist-get 'content result))
-           (first-item (aref content-items 0)))
+    (should (listp result))
+    (let ((first-item (car result)))
       (should (equal (alist-get 'type first-item) "text"))
       ;; The result should contain the evaluation result
       (should (string-match-p "5" (alist-get 'text first-item))))))
@@ -190,9 +188,8 @@
          (params '((functionBody . "(buffer-name (current-buffer))")))
          (result (funcall handler params)))
     (should result)
-    (should (alist-get 'content result))
-    (let* ((content-items (alist-get 'content result))
-           (first-item (aref content-items 0)))
+    (should (listp result))
+    (let ((first-item (car result)))
       (should (equal (alist-get 'type first-item) "text"))
       ;; Should return some buffer name
       (should (stringp (alist-get 'text first-item)))
@@ -203,22 +200,14 @@
   (require 'claude-code-ide-mcp-handlers)
   (let* ((handler (cdr (assoc "emacs_api" claude-code-ide-mcp-tools)))
          (params '((functionBody . "(undefined-function)")))
-         (result (condition-case err
-                     (funcall handler params)
-                   (error err))))
-    ;; Should return an error or error-formatted content
+         (result (funcall handler params)))
+    ;; Should return error-formatted content (handler catches errors internally)
     (should result)
-    (if (listp result)
-        ;; If it's an error condition, should have error info
-        (should (stringp (cadr result)))
-      ;; If it's a normal result, should contain error information in content
-      (progn
-        (should (alist-get 'content result))
-        (let* ((content-items (alist-get 'content result))
-               (first-item (aref content-items 0)))
-          (should (equal (alist-get 'type first-item) "text"))
-          ;; Should mention the error somehow
-          (should (string-match-p "error\\|Error\\|undefined" (alist-get 'text first-item))))))))
+    (should (listp result))
+    (let ((first-item (car result)))
+      (should (equal (alist-get 'type first-item) "text"))
+      ;; Should mention the error somehow
+      (should (string-match-p "error\\|Error\\|undefined" (alist-get 'text first-item))))))
 
 (ert-deftest claude-code-ide-test-emacs-api-invalid-params ()
   "Test emacs_api with invalid parameters."
@@ -231,17 +220,12 @@
                    (error err))))
     ;; Should signal an error for missing required parameter
     (should result)
-    (if (listp result)
-        ;; If it's an error condition
-        (should (stringp (cadr result)))
-      ;; If it's a result with error content
-      (progn
-        (should (alist-get 'content result))
-        (let* ((content-items (alist-get 'content result))
-               (first-item (aref content-items 0)))
-          (should (equal (alist-get 'type first-item) "text"))
-          ;; Should mention the missing parameter
-          (should (string-match-p "functionBody\\|parameter\\|required" (alist-get 'text first-item))))))))
+    ;; Should be an error condition (not content)
+    (should (listp result))
+    (should (eq (car result) 'mcp-error))
+    (should (stringp (cadr result)))
+    ;; Should mention the missing parameter
+    (should (string-match-p "functionBody\\|parameter\\|required" (cadr result)))))
 
 ;; === Mock flycheck module ===
 ;; Mock flycheck before loading any modules that require it
