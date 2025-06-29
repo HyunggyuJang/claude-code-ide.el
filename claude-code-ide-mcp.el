@@ -694,7 +694,7 @@ Optional SESSION contains the MCP session context."
         (claude-code-ide-debug "Creating lockfile for port %d" port)
         (claude-code-ide-mcp--create-lockfile port project-dir)
         (when global
-          (setenv "CLAUDE_CODE_SSE_PORT" port)
+          (setenv "CLAUDE_CODE_SSE_PORT" (number-to-string port))
           (setenv "ENABLE_IDE_INTEGRATION" "true")
           (setenv "TERM_PROGRAM" "emacs")
           (setenv "FORCE_CODE_TERMINAL" "true"))
