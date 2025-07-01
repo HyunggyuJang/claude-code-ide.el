@@ -663,32 +663,6 @@ ARGUMENTS should contain `filePath`."
           `((isDirty . ,(if (buffer-modified-p buffer) t :json-false)))
         `((isDirty . :json-false))))))
 
-(defun claude-code-ide-mcp-handle-emacs-api (arguments)
-  "Execute Emacs Lisp code directly via functionBody parameter.
-This provides direct access to Emacs Lisp evaluation similar to obsidian_api.
-ARGUMENTS should contain `functionBody` with the Lisp code to execute."
-  (claude-code-ide-debug "Executing emacs_api with arguments: %s" arguments)
-  (let ((function-body (alist-get 'functionBody arguments)))
-    (unless function-body
-      (signal 'mcp-error '("Missing required parameter: functionBody")))
-    (unless (stringp function-body)
-      (signal 'mcp-error '("functionBody parameter must be a string")))
-    
-    (condition-case err
-        (let* ((result (eval (read function-body)))
-               (serialized-result (if (eq result nil)
-                                      "nil"
-                                    (format "%S" result))))
-          (claude-code-ide-debug "emacs_api execution successful, result: %s" serialized-result)
-          ;; Return in VS Code MCP format
-          (list `((type . "text")
-                  (text . ,(format "Function executed successfully.\nResult: %s" serialized-result)))))
-      (error
-       (let ((error-message (format "Error executing function: %s" (error-message-string err))))
-         (claude-code-ide-debug "emacs_api execution failed: %s" error-message)
-         ;; Return error as content rather than signaling
-         (list `((type . "text")
-                 (text . ,error-message))))))))
 
 ;;; Tool Registry - Set the values
 
@@ -702,8 +676,7 @@ ARGUMENTS should contain `functionBody` with the Lisp code to execute."
         ("close_tab" . claude-code-ide-mcp-handle-close-tab)
         ("openDiff" . claude-code-ide-mcp-handle-open-diff)
         ("closeAllDiffTabs" . claude-code-ide-mcp-handle-close-all-diff-tabs)
-        ("checkDocumentDirty" . claude-code-ide-mcp-handle-check-document-dirty)
-        ("emacs_api" . claude-code-ide-mcp-handle-emacs-api)))
+        ("checkDocumentDirty" . claude-code-ide-mcp-handle-check-document-dirty)))
 
 (setq claude-code-ide-mcp-tool-schemas
       '(("openFile" . ((type . "object")
@@ -753,11 +726,7 @@ ARGUMENTS should contain `functionBody` with the Lisp code to execute."
         ("checkDocumentDirty" . ((type . "object")
                                  (properties . ((filePath . ((type . "string")
                                                              (description . "Path to the file to check")))))
-                                 (required . ["filePath"])))
-        ("emacs_api" . ((type . "object")
-                        (properties . ((functionBody . ((type . "string")
-                                                        (description . "The Emacs Lisp code to execute as a string")))))
-                        (required . ["functionBody"])))))
+                                 (required . ["filePath"])))))
 
 (setq claude-code-ide-mcp-tool-descriptions
       '(("openFile" . "Open a file in the editor and optionally select a range of text")
@@ -769,8 +738,7 @@ ARGUMENTS should contain `functionBody` with the Lisp code to execute."
         ("close_tab" . "Close a tab/buffer")
         ("openDiff" . "Open a diff view comparing old and new file contents")
         ("closeAllDiffTabs" . "Close all open diff tabs in the current session")
-        ("checkDocumentDirty" . "Check if a document has unsaved changes")
-        ("emacs_api" . "Execute Emacs Lisp code directly with full access to the Emacs environment. Use with caution as this provides unrestricted code execution.")))
+        ("checkDocumentDirty" . "Check if a document has unsaved changes")))
 
 (provide 'claude-code-ide-mcp-handlers)
 
