@@ -763,8 +763,8 @@ Optional SESSION contains the MCP session context."
   ;; Only send if there's an actual region selected
   (when (use-region-p)
     (let* ((file-path (or (buffer-file-name) ""))
-           (start-line (line-number-at-pos (region-beginning)))
-           (end-line (line-number-at-pos (region-end))))
+           (start-line (1- (line-number-at-pos (region-beginning))))
+           (end-line (1- (line-number-at-pos (region-end)))))
       (claude-code-ide-mcp--send-notification
        "at_mentioned"
        `((filePath . ,file-path)
