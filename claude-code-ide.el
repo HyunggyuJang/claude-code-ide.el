@@ -419,7 +419,7 @@ The MCP server is started and environment variables are set up."
 ;;;###autoload
 (defun claude-code-ide-server ()
   (interactive)
-  (claude-code-ide-mcp-start nil t))
+  (claude-code-ide-mcp-start (project-root (project-current)) t))
 
 (defun claude-code-ide-server-quit ()
   (interactive)
