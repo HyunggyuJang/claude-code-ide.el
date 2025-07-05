@@ -53,7 +53,6 @@
 
 (require 'vterm)
 (require 'cl-lib)
-(require 'project)
 (require 'claude-code-ide-mcp)
 (require 'claude-code-ide-debug)
 
@@ -142,9 +141,7 @@ window, allowing direct interaction with the diff controls."
 
 (defun claude-code-ide--get-working-directory ()
   "Get the current working directory (project root or current directory)."
-  (if-let ((project (project-current)))
-      (expand-file-name (project-root project))
-    (expand-file-name default-directory)))
+  claude-code-ide-project-root)
 
 (defun claude-code-ide--get-buffer-name (&optional directory)
   "Get the buffer name for the Claude Code session in DIRECTORY.
@@ -419,11 +416,11 @@ The MCP server is started and environment variables are set up."
 ;;;###autoload
 (defun claude-code-ide-server ()
   (interactive)
-  (claude-code-ide-mcp-start (project-root (project-current)) t))
+  (claude-code-ide-mcp-start () t))
 
 (defun claude-code-ide-server-quit ()
   (interactive)
-  (claude-code-ide-mcp-stop-session (project-root (project-current))))
+  (claude-code-ide-mcp-stop-session claude-code-ide-project-root))
 
 ;;;###autoload
 (defun claude-code-ide-check-status ()
@@ -495,13 +492,9 @@ If the buffer is already visible, switch focus to it."
 (defun claude-code-ide-insert-at-mentioned ()
   "Insert selected text into Claude prompt."
   (interactive)
-  (if-let* ((project-dir (claude-code-ide-mcp--get-buffer-project))
-            (session (claude-code-ide-mcp--get-session-for-project project-dir))
-            (client (claude-code-ide-mcp-session-client session)))
-      (progn
-        (claude-code-ide-mcp-send-at-mentioned)
-        (claude-code-ide-debug "Sent selection to Claude Code"))
-    (user-error "Claude Code is not connected.  Please start Claude Code first")))
+  (progn
+    (claude-code-ide-mcp-send-at-mentioned)
+    (claude-code-ide-debug "Sent selection to Claude Code")))
 
 ;;;###autoload
 (defun claude-code-ide-send-escape ()

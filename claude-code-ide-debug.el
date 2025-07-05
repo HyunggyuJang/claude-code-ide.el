@@ -31,7 +31,9 @@
 ;;; Code:
 
 (require 'json)
-(require 'project)
+
+
+(defconst claude-code-ide-project-root (expand-file-name "~/notes"))
 
 ;;; Customization
 
@@ -58,7 +60,7 @@
       (format "[%s]" (or (ignore-errors
                            (file-name-nondirectory
                             (directory-file-name
-                             (project-root (project-current)))))
+                             claude-code-ide-project-root)))
                          "no-project"))
     ""))
 

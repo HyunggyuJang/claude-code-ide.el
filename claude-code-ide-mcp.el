@@ -33,7 +33,6 @@
 (require 'websocket)
 (require 'json)
 (require 'cl-lib)
-(require 'project)
 (require 'url-parse)
 (require 'claude-code-ide-debug)
 (require 'claude-code-ide-mcp-handlers)
@@ -88,8 +87,7 @@
   "Get the project directory for the current buffer.
 Returns the expanded project root path if a project is found,
 otherwise returns nil."
-  (when-let ((project (project-current)))
-    (expand-file-name (project-root project))))
+  claude-code-ide-project-root)
 
 (defun claude-code-ide-mcp--get-session-for-project (project-dir)
   "Get the MCP session for PROJECT-DIR.
