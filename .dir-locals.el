@@ -6,7 +6,6 @@
 
 ;;; Code:
 
-((nil . ((indent-tabs-mode . nil)
-         (projectile-project-root . "~/notes/"))))
+((nil . ((indent-tabs-mode . nil))))
 
 ;;; .dir-locals.el ends here
