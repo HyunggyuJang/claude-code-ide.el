@@ -508,15 +508,11 @@ If the buffer is already visible, switch focus to it."
 
 ;;;###autoload
 (defun claude-code-ide-insert-newline ()
-  "Send newline (backslash + return) to the Claude Code vterm buffer for the current project.
+  "Send newline (backslash + return) to vterm buffer.
 This simulates typing backslash followed by Enter, which Claude Code interprets as a newline."
   (interactive)
-  (let ((buffer-name (claude-code-ide--get-buffer-name)))
-    (if-let ((buffer (get-buffer buffer-name)))
-        (with-current-buffer buffer
-          (vterm-send-string "\\")
-          (vterm-send-return))
-      (user-error "No Claude Code session for this project"))))
+  (vterm-send-string "\\")
+  (vterm-send-return))
 
 (provide 'claude-code-ide)
 
