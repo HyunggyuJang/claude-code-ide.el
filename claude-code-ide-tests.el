@@ -569,7 +569,7 @@ have completed before cleanup.  Waits up to 5 seconds."
       (let ((claude-code-ide--cli-available t)
             (claude-code-ide-cli-path "echo")
             (workspace1 "test-workspace-1")
-            (workspace2 "test-workspace-2") 
+            (workspace2 "test-workspace-2")
             (workspace3 "test-workspace-3")
             (workspace4 "test-workspace-4")
             (dir1 (make-temp-file "claude-test-1" t))
@@ -577,7 +577,7 @@ have completed before cleanup.  Waits up to 5 seconds."
             (dir3 (make-temp-file "claude-test-3" t))
             (dir4 (make-temp-file "claude-test-4" t))
             (created-buffers '()))
-        
+
         ;; Mock vterm and related functions
         (cl-letf (((symbol-function 'vterm)
                    (lambda (&optional buffer-name)
@@ -601,44 +601,44 @@ have completed before cleanup.  Waits up to 5 seconds."
                       ((string-match "claude-test-3" default-directory) workspace3)
                       ((string-match "claude-test-4" default-directory) workspace4)
                       (t "default-workspace")))))
-          
+
           ;; Start concurrent sessions in different directories using the actual claude-code-ide function
           ;; This is the core test: multiple claude-code-ide calls should work without interference
           (let ((default-directory dir1))
             (claude-code-ide)
             ;; Test passes if no error is thrown
             (should t))
-            
+
           (let ((default-directory dir2))
             (claude-code-ide)
-            ;; Test passes if no error is thrown  
+            ;; Test passes if no error is thrown
             (should t))
-            
+
           (let ((default-directory dir3))
             (claude-code-ide)
             ;; Test passes if no error is thrown
             (should t))
-            
+
           (let ((default-directory dir4))
             (claude-code-ide)
             ;; Test passes if no error is thrown
             (should t))
-          
+
           ;; Test that multiple claude-code-ide calls work concurrently
           ;; This demonstrates the core concurrent session functionality:
           ;; Multiple sessions can be started in different directories without interference
-          
+
           ;; Test calling claude-code-ide again in same directories doesn't break
           (let ((default-directory dir1))
             (claude-code-ide)) ; Should not crash or interfere with existing session
-            
+
           (let ((default-directory dir2))
             (claude-code-ide)) ; Should not crash or interfere with existing session
-          
+
           ;; Verify that the sessions can be accessed after multiple calls
           ;; This tests the concurrent session management robustness
           (should t) ; If we get this far, concurrent sessions work
-          
+
           ;; Clean up buffers
           (let ((buffers (mapcar (lambda (dir)
                                    (funcall claude-code-ide-buffer-name-function dir))
@@ -1793,15 +1793,15 @@ have completed before cleanup.  Waits up to 5 seconds."
         (test-buffer (generate-new-buffer "*test-claude-workspace*"))
         (test-process :mock-process)
         (displayed-buffer nil))
-    
+
     ;; Mock session data
     (let ((session `(:buffer ,test-buffer
-                     :process ,test-process
-                     :directory "/test/workspace1"
-                     :workspace-name "workspace1"
-                     :created ,(current-time))))
+                             :process ,test-process
+                             :directory "/test/workspace1"
+                             :workspace-name "workspace1"
+                             :created ,(current-time))))
       (puthash "workspace1" session claude-code-ide--workspace-sessions))
-    
+
     ;; Mock display function to track calls
     (cl-letf* (((symbol-function 'claude-code-ide--display-buffer-in-side-window)
                 (lambda (buffer)
@@ -1809,18 +1809,19 @@ have completed before cleanup.  Waits up to 5 seconds."
                   (selected-window)))
                ((symbol-function 'process-live-p) (lambda (_) t))
                ((symbol-function 'buffer-live-p) (lambda (_) t)))
-      
+
       ;; Create mock perspective object
       (let ((mock-persp `((name . "workspace1"))))
-        ;; Mock persp-name to return the workspace name
-        (cl-letf (((symbol-function 'persp-name) (lambda (persp) (alist-get 'name persp))))
-          
-          ;; Test the hook function
-          (claude-code-ide--workspace-activated-h mock-persp)
-          
+        ;; Mock persp-name and get-current-persp
+        (cl-letf (((symbol-function 'persp-name) (lambda (persp) (alist-get 'name persp)))
+                  ((symbol-function 'get-current-persp) (lambda () mock-persp)))
+
+          ;; Test the hook function with 'frame type
+          (claude-code-ide--workspace-activated-h 'frame)
+
           ;; Verify the correct buffer was displayed
           (should (eq displayed-buffer test-buffer)))))
-    
+
     ;; Cleanup
     (kill-buffer test-buffer)))
 
@@ -1830,40 +1831,41 @@ have completed before cleanup.  Waits up to 5 seconds."
         (test-buffer (generate-new-buffer "*test-claude-workspace*"))
         (test-process :mock-process)
         (session-updated nil))
-    
+
     ;; Mock session data
     (let ((session `(:buffer ,test-buffer
-                     :process ,test-process
-                     :directory "/test/workspace1"
-                     :workspace-name "workspace1"
-                     :created ,(current-time))))
+                             :process ,test-process
+                             :directory "/test/workspace1"
+                             :workspace-name "workspace1"
+                             :created ,(current-time))))
       (puthash "workspace1" session claude-code-ide--workspace-sessions))
-    
+
     ;; Mock functions
     (cl-letf* (((symbol-function 'claude-code-ide--set-workspace-session)
                 (lambda (new-session workspace-name)
                   (setq session-updated (list new-session workspace-name))
                   (puthash workspace-name new-session claude-code-ide--workspace-sessions)))
-               ((symbol-function 'claude-code-ide--get-workspace-name) 
+               ((symbol-function 'claude-code-ide--get-workspace-name)
                 (lambda () "workspace1"))
                ((symbol-function 'claude-code-ide--get-workspace-session)
                 (lambda (&optional workspace-name)
                   (gethash (or workspace-name "workspace1") claude-code-ide--workspace-sessions)))
                ((symbol-function 'buffer-live-p) (lambda (_) t)))
-      
-      ;; Create mock perspective object  
+
+      ;; Create mock perspective object
       (let ((mock-persp `((name . "workspace1"))))
-        ;; Mock persp-name to return the workspace name
-        (cl-letf (((symbol-function 'persp-name) (lambda (persp) (alist-get 'name persp))))
-          
-          ;; Test the hook function
-          (claude-code-ide--workspace-deactivated-h mock-persp)
-          
+        ;; Mock persp-name and get-current-persp
+        (cl-letf (((symbol-function 'persp-name) (lambda (persp) (alist-get 'name persp)))
+                  ((symbol-function 'get-current-persp) (lambda () mock-persp)))
+
+          ;; Test the hook function with 'frame type
+          (claude-code-ide--workspace-deactivated-h 'frame)
+
           ;; Verify session was updated with last-active timestamp
           (should session-updated)
           (should (equal (cadr session-updated) "workspace1"))
           (should (plist-get (car session-updated) :last-active)))))
-    
+
     ;; Cleanup
     (kill-buffer test-buffer)))
 
@@ -1871,15 +1873,16 @@ have completed before cleanup.  Waits up to 5 seconds."
   "Test workspace hooks handle nil perspective gracefully."
   (let ((hook-called nil))
     ;; Mock debug function to track if hooks run
-    (cl-letf (((symbol-function 'claude-code-ide-debug) 
-               (lambda (&rest _) (setq hook-called t))))
-      
-      ;; Test activation hook with nil
-      (claude-code-ide--workspace-activated-h nil)
+    (cl-letf (((symbol-function 'claude-code-ide-debug)
+               (lambda (&rest _) (setq hook-called t)))
+              ((symbol-function 'get-current-persp) (lambda () nil)))
+
+      ;; Test activation hook with nil perspective
+      (claude-code-ide--workspace-activated-h 'frame)
       (should (not hook-called))
-      
-      ;; Test deactivation hook with nil
-      (claude-code-ide--workspace-deactivated-h nil)
+
+      ;; Test deactivation hook with nil perspective
+      (claude-code-ide--workspace-deactivated-h 'frame)
       (should (not hook-called)))))
 
 (ert-deftest claude-code-ide-test-workspace-session-switching ()
@@ -1888,13 +1891,13 @@ have completed before cleanup.  Waits up to 5 seconds."
         (test-buffer1 (generate-new-buffer "*test-claude-ws1*"))
         (test-buffer2 (generate-new-buffer "*test-claude-ws2*"))
         (displayed-buffers '()))
-    
+
     ;; Create two mock sessions
     (let ((session1 `(:buffer ,test-buffer1 :process :mock-proc1))
           (session2 `(:buffer ,test-buffer2 :process :mock-proc2)))
       (puthash "workspace1" session1 claude-code-ide--workspace-sessions)
       (puthash "workspace2" session2 claude-code-ide--workspace-sessions))
-    
+
     ;; Mock functions
     (cl-letf* (((symbol-function 'claude-code-ide--display-buffer-in-side-window)
                 (lambda (buffer)
@@ -1902,20 +1905,20 @@ have completed before cleanup.  Waits up to 5 seconds."
                   (selected-window)))
                ((symbol-function 'process-live-p) (lambda (_) t))
                ((symbol-function 'buffer-live-p) (lambda (_) t)))
-      
+
       ;; Test switching to workspace1
       (claude-code-ide--switch-to-workspace-session "workspace1")
       (should (memq test-buffer1 displayed-buffers))
-      
-      ;; Test switching to workspace2  
+
+      ;; Test switching to workspace2
       (claude-code-ide--switch-to-workspace-session "workspace2")
       (should (memq test-buffer2 displayed-buffers))
-      
+
       ;; Test switching to non-existent workspace (should be no-op)
       (let ((buffers-before (length displayed-buffers)))
         (claude-code-ide--switch-to-workspace-session "nonexistent")
         (should (= (length displayed-buffers) buffers-before))))
-    
+
     ;; Cleanup
     (kill-buffer test-buffer1)
     (kill-buffer test-buffer2)))
@@ -1925,35 +1928,35 @@ have completed before cleanup.  Waits up to 5 seconds."
   (let ((persp-activated-functions '())
         (persp-before-deactivate-functions '())
         (hook-functions-added nil))
-    
+
     ;; Mock hook functions to track additions/removals
     (cl-letf* (((symbol-function 'add-hook)
                 (lambda (hook function)
                   (when (eq hook 'persp-activated-functions)
                     (push function persp-activated-functions))
-                  (when (eq hook 'persp-before-deactivate-functions)  
+                  (when (eq hook 'persp-before-deactivate-functions)
                     (push function persp-before-deactivate-functions))
                   (setq hook-functions-added t)))
                ((symbol-function 'remove-hook)
                 (lambda (hook function)
                   (when (eq hook 'persp-activated-functions)
-                    (setq persp-activated-functions 
+                    (setq persp-activated-functions
                           (remove function persp-activated-functions)))
                   (when (eq hook 'persp-before-deactivate-functions)
-                    (setq persp-before-deactivate-functions 
+                    (setq persp-before-deactivate-functions
                           (remove function persp-before-deactivate-functions)))))
                ;; Mock persp-mode feature checks
-               ((symbol-function 'featurep) 
+               ((symbol-function 'featurep)
                 (lambda (feature) (eq feature 'persp-mode)))
                ((symbol-function 'fboundp) (lambda (_) t))
                ((symbol-function 'boundp) (lambda (_) t)))
-      
+
       ;; Test enabling hooks
       (claude-code-ide--enable-workspace-hooks)
       (should hook-functions-added)
       (should (memq #'claude-code-ide--workspace-activated-h persp-activated-functions))
       (should (memq #'claude-code-ide--workspace-deactivated-h persp-before-deactivate-functions))
-      
+
       ;; Test disabling hooks
       (claude-code-ide--disable-workspace-hooks)
       (should (not (memq #'claude-code-ide--workspace-activated-h persp-activated-functions)))
@@ -1963,16 +1966,16 @@ have completed before cleanup.  Waits up to 5 seconds."
   "Test hook registration when persp-mode is not available."
   (let ((hooks-registered nil))
     ;; Mock add-hook to track if called
-    (cl-letf* (((symbol-function 'add-hook) 
+    (cl-letf* (((symbol-function 'add-hook)
                 (lambda (&rest _) (setq hooks-registered t)))
                ;; Mock persp-mode as not available
                ((symbol-function 'featurep) (lambda (_) nil))
                ((symbol-function 'fboundp) (lambda (_) nil))
                ((symbol-function 'boundp) (lambda (_) nil)))
-      
+
       ;; Try to enable hooks
       (claude-code-ide--enable-workspace-hooks)
-      
+
       ;; Should not register hooks when persp-mode unavailable
       (should (not hooks-registered)))))
 
@@ -1981,212 +1984,212 @@ have completed before cleanup.  Waits up to 5 seconds."
 (ert-deftest claude-code-ide-test-+workspace/claude-code-without-prefix ()
   "Test +workspace/claude-code without prefix argument (get or create)."
   (claude-code-ide-test-with-workspace-session-mocks
-    (let ((session-created nil)
-          (session-switched nil))
-      ;; Mock implementation functions
-      (cl-letf (((symbol-function 'claude-code-ide--get-or-create-workspace-session)
-                 (lambda () (setq session-created t)))
-                ((symbol-function 'claude-code-ide--create-new-workspace-session)
-                 (lambda () (setq session-switched t))))
-        
-        ;; Test without prefix (should get or create)
-        (+workspace/claude-code nil)
-        (should session-created)
-        (should (not session-switched))))))
+   (let ((session-created nil)
+         (session-switched nil))
+     ;; Mock implementation functions
+     (cl-letf (((symbol-function 'claude-code-ide--get-or-create-workspace-session)
+                (lambda () (setq session-created t)))
+               ((symbol-function 'claude-code-ide--create-new-workspace-session)
+                (lambda () (setq session-switched t))))
+
+       ;; Test without prefix (should get or create)
+       (+workspace/claude-code nil)
+       (should session-created)
+       (should (not session-switched))))))
 
 (ert-deftest claude-code-ide-test-+workspace/claude-code-with-prefix ()
   "Test +workspace/claude-code with prefix argument (force new)."
   (claude-code-ide-test-with-workspace-session-mocks
-    (let ((session-created nil)
-          (session-switched nil))
-      ;; Mock implementation functions
-      (cl-letf (((symbol-function 'claude-code-ide--get-or-create-workspace-session)
-                 (lambda () (setq session-created t)))
-                ((symbol-function 'claude-code-ide--create-new-workspace-session)
-                 (lambda () (setq session-switched t))))
-        
-        ;; Test with prefix (should force new)
-        (+workspace/claude-code t)
-        (should (not session-created))
-        (should session-switched)))))
+   (let ((session-created nil)
+         (session-switched nil))
+     ;; Mock implementation functions
+     (cl-letf (((symbol-function 'claude-code-ide--get-or-create-workspace-session)
+                (lambda () (setq session-created t)))
+               ((symbol-function 'claude-code-ide--create-new-workspace-session)
+                (lambda () (setq session-switched t))))
+
+       ;; Test with prefix (should force new)
+       (+workspace/claude-code t)
+       (should (not session-created))
+       (should session-switched)))))
 
 (ert-deftest claude-code-ide-test-+workspace/claude-code-kill ()
   "Test +workspace/claude-code-kill command."
   (claude-code-ide-test-with-workspace-session-mocks
-    (let ((kill-called nil))
-      ;; Mock kill function
-      (cl-letf (((symbol-function 'claude-code-ide--kill-workspace-session)
-                 (lambda (&optional _) (setq kill-called t))))
-        
-        (+workspace/claude-code-kill)
-        (should kill-called)))))
+   (let ((kill-called nil))
+     ;; Mock kill function
+     (cl-letf (((symbol-function 'claude-code-ide--kill-workspace-session)
+                (lambda (&optional _) (setq kill-called t))))
+
+       (+workspace/claude-code-kill)
+       (should kill-called)))))
 
 (ert-deftest claude-code-ide-test-+workspace/claude-code-restart ()
   "Test +workspace/claude-code-restart command."
   (claude-code-ide-test-with-workspace-session-mocks
-    (let ((restart-called nil))
-      ;; Mock restart function
-      (cl-letf (((symbol-function 'claude-code-ide--restart-workspace-session)
-                 (lambda () (setq restart-called t))))
-        
-        (+workspace/claude-code-restart)
-        (should restart-called)))))
+   (let ((restart-called nil))
+     ;; Mock restart function
+     (cl-letf (((symbol-function 'claude-code-ide--restart-workspace-session)
+                (lambda () (setq restart-called t))))
+
+       (+workspace/claude-code-restart)
+       (should restart-called)))))
 
 (ert-deftest claude-code-ide-test-+workspace/claude-code-switch ()
   "Test +workspace/claude-code-switch command."
   (claude-code-ide-test-with-workspace-session-mocks
-    (let ((switch-called nil))
-      ;; Mock switch function
-      (cl-letf (((symbol-function 'claude-code-ide--switch-workspace-sessions)
-                 (lambda () (setq switch-called t))))
-        
-        (+workspace/claude-code-switch)
-        (should switch-called)))))
+   (let ((switch-called nil))
+     ;; Mock switch function
+     (cl-letf (((symbol-function 'claude-code-ide--switch-workspace-sessions)
+                (lambda () (setq switch-called t))))
+
+       (+workspace/claude-code-switch)
+       (should switch-called)))))
 
 (ert-deftest claude-code-ide-test-get-or-create-workspace-session-existing ()
   "Test get-or-create when existing session is alive."
   (claude-code-ide-test-with-workspace-session-mocks
-    (let* ((mock-process (make-process :name "test" :command '("echo" "test")))
-           (test-session `(:process ,mock-process :directory "/test" :buffer nil))
-           (switch-called nil)
-           (start-called nil))
-      
-      ;; Mock existing session
-      (cl-letf (((symbol-function 'claude-code-ide--get-workspace-name)
-                 (lambda () "test-workspace"))
-                ((symbol-function 'claude-code-ide--get-workspace-session)
-                 (lambda (_) test-session))
-                ((symbol-function 'process-live-p)
-                 (lambda (_) t))
-                ((symbol-function 'claude-code-ide--switch-to-workspace-session)
-                 (lambda (_) (setq switch-called t)))
-                ((symbol-function 'claude-code-ide--start-session)
-                 (lambda (&rest _) (setq start-called t))))
-        
-        (claude-code-ide--get-or-create-workspace-session)
-        (should switch-called)
-        (should (not start-called))))))
+   (let* ((mock-process (make-process :name "test" :command '("echo" "test")))
+          (test-session `(:process ,mock-process :directory "/test" :buffer nil))
+          (switch-called nil)
+          (start-called nil))
+
+     ;; Mock existing session
+     (cl-letf (((symbol-function 'claude-code-ide--get-workspace-name)
+                (lambda () "test-workspace"))
+               ((symbol-function 'claude-code-ide--get-workspace-session)
+                (lambda (_) test-session))
+               ((symbol-function 'process-live-p)
+                (lambda (_) t))
+               ((symbol-function 'claude-code-ide--switch-to-workspace-session)
+                (lambda (_) (setq switch-called t)))
+               ((symbol-function 'claude-code-ide--start-session)
+                (lambda (&rest _) (setq start-called t))))
+
+       (claude-code-ide--get-or-create-workspace-session)
+       (should switch-called)
+       (should (not start-called))))))
 
 (ert-deftest claude-code-ide-test-get-or-create-workspace-session-no-existing ()
   "Test get-or-create when no existing session."
   (claude-code-ide-test-with-workspace-session-mocks
-    (let ((switch-called nil)
-          (start-called nil))
-      
-      ;; Mock no existing session
-      (cl-letf (((symbol-function 'claude-code-ide--get-workspace-name)
-                 (lambda () "test-workspace"))
-                ((symbol-function 'claude-code-ide--get-workspace-session)
-                 (lambda (_) nil))
-                ((symbol-function 'claude-code-ide--switch-to-workspace-session)
-                 (lambda (_) (setq switch-called t)))
-                ((symbol-function 'claude-code-ide--start-session)
-                 (lambda (&rest _) (setq start-called t))))
-        
-        (claude-code-ide--get-or-create-workspace-session)
-        (should (not switch-called))
-        (should start-called)))))
+   (let ((switch-called nil)
+         (start-called nil))
+
+     ;; Mock no existing session
+     (cl-letf (((symbol-function 'claude-code-ide--get-workspace-name)
+                (lambda () "test-workspace"))
+               ((symbol-function 'claude-code-ide--get-workspace-session)
+                (lambda (_) nil))
+               ((symbol-function 'claude-code-ide--switch-to-workspace-session)
+                (lambda (_) (setq switch-called t)))
+               ((symbol-function 'claude-code-ide--start-session)
+                (lambda (&rest _) (setq start-called t))))
+
+       (claude-code-ide--get-or-create-workspace-session)
+       (should (not switch-called))
+       (should start-called)))))
 
 (ert-deftest claude-code-ide-test-create-new-workspace-session ()
   "Test creating new workspace session (kills existing first)."
   (claude-code-ide-test-with-workspace-session-mocks
-    (let ((kill-called nil)
-          (start-called nil)
-          (workspace-name "test-workspace"))
-      
-      ;; Mock functions
-      (cl-letf (((symbol-function 'claude-code-ide--get-workspace-name)
-                 (lambda () workspace-name))
-                ((symbol-function 'claude-code-ide--kill-workspace-session-internal)
-                 (lambda (name) 
-                   (should (equal name workspace-name))
-                   (setq kill-called t)))
-                ((symbol-function 'claude-code-ide--start-session)
-                 (lambda (&rest _) (setq start-called t))))
-        
-        (claude-code-ide--create-new-workspace-session)
-        (should kill-called)
-        (should start-called)))))
+   (let ((kill-called nil)
+         (start-called nil)
+         (workspace-name "test-workspace"))
+
+     ;; Mock functions
+     (cl-letf (((symbol-function 'claude-code-ide--get-workspace-name)
+                (lambda () workspace-name))
+               ((symbol-function 'claude-code-ide--kill-workspace-session-internal)
+                (lambda (name)
+                  (should (equal name workspace-name))
+                  (setq kill-called t)))
+               ((symbol-function 'claude-code-ide--start-session)
+                (lambda (&rest _) (setq start-called t))))
+
+       (claude-code-ide--create-new-workspace-session)
+       (should kill-called)
+       (should start-called)))))
 
 (ert-deftest claude-code-ide-test-switch-workspace-sessions-with-active ()
   "Test switching between workspace sessions when sessions exist."
   (claude-code-ide-test-with-workspace-session-mocks
-    (let* ((mock-process (make-process :name "test" :command '("echo" "test")))
-           (sessions (make-hash-table :test 'equal))
-           (choice-made nil)
-           (switch-called nil))
-      
-      ;; Set up mock sessions
-      (puthash "workspace1" `(:process ,mock-process) sessions)
-      (puthash "workspace2" `(:process ,mock-process) sessions)
-      
-      ;; Mock functions
-      (cl-letf (((symbol-function 'claude-code-ide--cleanup-dead-workspace-sessions)
-                 (lambda ()))
-                ((symbol-value 'claude-code-ide--workspace-sessions) sessions)
-                ((symbol-function 'process-live-p)
-                 (lambda (_) t))
-                ((symbol-function 'completing-read)
-                 (lambda (prompt choices &rest _)
-                   (should (string-match "Switch to Claude workspace session" prompt))
-                   (should (>= (length choices) 2))
-                   (setq choice-made t)
-                   "workspace1"))
-                ((symbol-function 'claude-code-ide--switch-to-workspace-session)
-                 (lambda (name)
-                   (should (equal name "workspace1"))
-                   (setq switch-called t))))
-        
-        (claude-code-ide--switch-workspace-sessions)
-        (should choice-made)
-        (should switch-called)))))
+   (let* ((mock-process (make-process :name "test" :command '("echo" "test")))
+          (sessions (make-hash-table :test 'equal))
+          (choice-made nil)
+          (switch-called nil))
+
+     ;; Set up mock sessions
+     (puthash "workspace1" `(:process ,mock-process) sessions)
+     (puthash "workspace2" `(:process ,mock-process) sessions)
+
+     ;; Mock functions
+     (cl-letf (((symbol-function 'claude-code-ide--cleanup-dead-workspace-sessions)
+                (lambda ()))
+               ((symbol-value 'claude-code-ide--workspace-sessions) sessions)
+               ((symbol-function 'process-live-p)
+                (lambda (_) t))
+               ((symbol-function 'completing-read)
+                (lambda (prompt choices &rest _)
+                  (should (string-match "Switch to Claude workspace session" prompt))
+                  (should (>= (length choices) 2))
+                  (setq choice-made t)
+                  "workspace1"))
+               ((symbol-function 'claude-code-ide--switch-to-workspace-session)
+                (lambda (name)
+                  (should (equal name "workspace1"))
+                  (setq switch-called t))))
+
+       (claude-code-ide--switch-workspace-sessions)
+       (should choice-made)
+       (should switch-called)))))
 
 (ert-deftest claude-code-ide-test-switch-workspace-sessions-no-active ()
   "Test switching when no active workspace sessions exist."
   (claude-code-ide-test-with-workspace-session-mocks
-    (let ((log-called nil)
-          (sessions (make-hash-table :test 'equal)))
-      
-      ;; Mock functions
-      (cl-letf (((symbol-function 'claude-code-ide--cleanup-dead-workspace-sessions)
-                 (lambda ()))
-                ((symbol-value 'claude-code-ide--workspace-sessions) sessions)
-                ((symbol-function 'claude-code-ide-log)
-                 (lambda (msg &rest _)
-                   (should (string-match "No active Claude Code workspace sessions" msg))
-                   (setq log-called t))))
-        
-        (claude-code-ide--switch-workspace-sessions)
-        (should log-called)))))
+   (let ((log-called nil)
+         (sessions (make-hash-table :test 'equal)))
+
+     ;; Mock functions
+     (cl-letf (((symbol-function 'claude-code-ide--cleanup-dead-workspace-sessions)
+                (lambda ()))
+               ((symbol-value 'claude-code-ide--workspace-sessions) sessions)
+               ((symbol-function 'claude-code-ide-log)
+                (lambda (msg &rest _)
+                  (should (string-match "No active Claude Code workspace sessions" msg))
+                  (setq log-called t))))
+
+       (claude-code-ide--switch-workspace-sessions)
+       (should log-called)))))
 
 (ert-deftest claude-code-ide-test-kill-workspace-session-internal ()
   "Test internal workspace session kill functionality."
   (claude-code-ide-test-with-workspace-session-mocks
-    (let* ((mock-process (make-process :name "test" :command '("echo" "test")))
-           (test-session `(:process ,mock-process :directory "/test"))
-           (cleanup-called nil)
-           (log-called nil))
-      
-      ;; Mock functions
-      (cl-letf (((symbol-function 'claude-code-ide--get-workspace-session)
-                 (lambda (name)
-                   (should (equal name "test-workspace"))
-                   test-session))
-                ((symbol-function 'process-live-p)
-                 (lambda (_) t))
-                ((symbol-function 'claude-code-ide--cleanup-on-exit)
-                 (lambda (dir)
-                   (should (equal dir "/test"))
-                   (setq cleanup-called t)))
-                ((symbol-function 'claude-code-ide-log)
-                 (lambda (msg &rest args)
-                   (let ((formatted-msg (apply #'format msg args)))
-                     (should (string-match "killed for workspace: test-workspace" formatted-msg)))
-                   (setq log-called t))))
-        
-        (claude-code-ide--kill-workspace-session-internal "test-workspace")
-        (should cleanup-called)
-        (should log-called)))))
+   (let* ((mock-process (make-process :name "test" :command '("echo" "test")))
+          (test-session `(:process ,mock-process :directory "/test"))
+          (cleanup-called nil)
+          (log-called nil))
+
+     ;; Mock functions
+     (cl-letf (((symbol-function 'claude-code-ide--get-workspace-session)
+                (lambda (name)
+                  (should (equal name "test-workspace"))
+                  test-session))
+               ((symbol-function 'process-live-p)
+                (lambda (_) t))
+               ((symbol-function 'claude-code-ide--cleanup-on-exit)
+                (lambda (dir)
+                  (should (equal dir "/test"))
+                  (setq cleanup-called t)))
+               ((symbol-function 'claude-code-ide-log)
+                (lambda (msg &rest args)
+                  (let ((formatted-msg (apply #'format msg args)))
+                    (should (string-match "killed for workspace: test-workspace" formatted-msg)))
+                  (setq log-called t))))
+
+       (claude-code-ide--kill-workspace-session-internal "test-workspace")
+       (should cleanup-called)
+       (should log-called)))))
 
 ;;; Workspace Persistence Tests
 
@@ -2197,20 +2200,20 @@ have completed before cleanup.  Waits up to 5 seconds."
          (test-created-time (current-time))
          (test-active-time (current-time))
          (test-session `(:process nil
-                                 :directory ,test-directory
-                                 :buffer ,test-buffer
-                                 :workspace-name "test-workspace"
-                                 :created ,test-created-time
-                                 :last-active ,test-active-time))
+                                  :directory ,test-directory
+                                  :buffer ,test-buffer
+                                  :workspace-name "test-workspace"
+                                  :created ,test-created-time
+                                  :last-active ,test-active-time))
          (claude-code-ide-mcp--sessions (make-hash-table :test 'equal))
-         (mcp-session (make-claude-code-ide-mcp-session 
-                      :project-dir test-directory
-                      :port 12345
-                      :original-tab "test-tab")))
-    
+         (mcp-session (make-claude-code-ide-mcp-session
+                       :project-dir test-directory
+                       :port 12345
+                       :original-tab "test-tab")))
+
     ;; Setup MCP session
     (puthash test-directory mcp-session claude-code-ide-mcp--sessions)
-    
+
     (unwind-protect
         (let ((serialized (claude-code-ide--serialize-session-state test-session)))
           ;; Verify serialized state structure
@@ -2220,18 +2223,18 @@ have completed before cleanup.  Waits up to 5 seconds."
           (should (equal (plist-get serialized :created) test-created-time))
           (should (equal (plist-get serialized :last-active) test-active-time))
           (should (equal (plist-get serialized :buffer-name) "*test-buffer*"))
-          
+
           ;; Verify MCP config is included
           (let ((mcp-config (plist-get serialized :mcp-config)))
             (should (listp mcp-config))
             (should (equal (plist-get mcp-config :project-dir) test-directory))
             (should (equal (plist-get mcp-config :port) 12345))
             (should (equal (plist-get mcp-config :original-tab) "test-tab")))
-          
+
           ;; Verify no process objects in serialized state
           (should-not (plist-get serialized :process))
           (should-not (plist-get serialized :buffer)))
-      
+
       ;; Cleanup
       (when (buffer-live-p test-buffer)
         (kill-buffer test-buffer)))))
@@ -2241,12 +2244,12 @@ have completed before cleanup.  Waits up to 5 seconds."
   (let* ((test-directory "/test/directory")
          (test-buffer (generate-new-buffer "*test-buffer*"))
          (test-session `(:directory ,test-directory
-                                   :workspace-name "test-workspace"
-                                   :buffer ,test-buffer)))
-    
+                                    :workspace-name "test-workspace"
+                                    :buffer ,test-buffer)))
+
     ;; Kill the buffer before serialization
     (kill-buffer test-buffer)
-    
+
     (let ((serialized (claude-code-ide--serialize-session-state test-session)))
       ;; Should not include buffer-name for dead buffer
       (should-not (plist-get serialized :buffer-name)))))
@@ -2257,17 +2260,17 @@ have completed before cleanup.  Waits up to 5 seconds."
          (test-directory "/test/directory")
          (test-buffer (generate-new-buffer "*test-buffer*"))
          (test-session `(:process nil
-                                 :directory ,test-directory
-                                 :buffer ,test-buffer
-                                 :workspace-name ,test-workspace-name))
+                                  :directory ,test-directory
+                                  :buffer ,test-buffer
+                                  :workspace-name ,test-workspace-name))
          (claude-code-ide--workspace-sessions (make-hash-table :test 'equal))
          (saved-parameters (make-hash-table :test 'equal))
          (mock-persp (list :name test-workspace-name))
          (log-messages '()))
-    
+
     ;; Setup session
     (puthash test-workspace-name test-session claude-code-ide--workspace-sessions)
-    
+
     ;; Mock persp functions
     (cl-letf* (((symbol-function 'persp-name)
                 (lambda (persp) (plist-get persp :name)))
@@ -2279,21 +2282,21 @@ have completed before cleanup.  Waits up to 5 seconds."
                ((symbol-function 'claude-code-ide-log)
                 (lambda (msg &rest args)
                   (push (apply #'format msg args) log-messages))))
-      
+
       (unwind-protect
           (progn
             ;; Call the save hook
             (claude-code-ide--workspace-save-hook mock-persp)
-            
+
             ;; Verify session state was saved
             (let ((saved-state (gethash 'claude-session-state saved-parameters)))
               (should saved-state)
               (should (equal (plist-get saved-state :directory) test-directory))
               (should (equal (plist-get saved-state :workspace-name) test-workspace-name)))
-            
+
             ;; Verify log message
             (should (member "Saved Claude session state for workspace: test-workspace" log-messages)))
-        
+
         ;; Cleanup
         (when (buffer-live-p test-buffer)
           (kill-buffer test-buffer))))))
@@ -2303,15 +2306,15 @@ have completed before cleanup.  Waits up to 5 seconds."
   (let* ((test-workspace-name "test-workspace")
          (test-directory (make-temp-file "test-dir" t))
          (test-state `(:directory ,test-directory
-                                 :workspace-name ,test-workspace-name
-                                 :created (encode-time 0 0 12 15 7 2025)))
+                                  :workspace-name ,test-workspace-name
+                                  :created (encode-time 0 0 12 15 7 2025)))
          (claude-code-ide--workspace-restore-data (make-hash-table :test 'equal))
          (mock-persp (list :name test-workspace-name))
          (log-messages '()))
-    
+
     ;; Create test directory
     (make-directory test-directory t)
-    
+
     ;; Mock persp functions
     (cl-letf* (((symbol-function 'persp-name)
                 (lambda (persp) (plist-get persp :name)))
@@ -2323,23 +2326,23 @@ have completed before cleanup.  Waits up to 5 seconds."
                ((symbol-function 'claude-code-ide-log)
                 (lambda (msg &rest args)
                   (push (apply #'format msg args) log-messages))))
-      
+
       (unwind-protect
           (progn
             ;; Call the restore hook
             (claude-code-ide--workspace-restore-hook mock-persp)
-            
+
             ;; Verify restoration data was stored
             (let ((restore-info (gethash test-workspace-name claude-code-ide--workspace-restore-data)))
               (should restore-info)
               (should (equal (plist-get restore-info :state) test-state))
               (should-not (plist-get restore-info :restored)))
-            
+
             ;; Verify log message
-            (should (cl-some (lambda (msg) 
-                              (string-match "Claude session state available for workspace test-workspace" msg))
-                            log-messages)))
-        
+            (should (cl-some (lambda (msg)
+                               (string-match "Claude session state available for workspace test-workspace" msg))
+                             log-messages)))
+
         ;; Cleanup
         (when (file-directory-p test-directory)
           (delete-directory test-directory t))))))
@@ -2349,16 +2352,16 @@ have completed before cleanup.  Waits up to 5 seconds."
   (let* ((test-workspace-name "test-workspace")
          (test-directory (make-temp-file "test-dir" t))
          (test-state `(:directory ,test-directory
-                                 :workspace-name ,test-workspace-name))
+                                  :workspace-name ,test-workspace-name))
          (claude-code-ide--workspace-restore-data (make-hash-table :test 'equal))
          (session-started nil)
          (log-messages '()))
-    
+
     ;; Setup restoration data
-    (puthash test-workspace-name 
-              (list :state test-state :restored nil)
-              claude-code-ide--workspace-restore-data)
-    
+    (puthash test-workspace-name
+             (list :state test-state :restored nil)
+             claude-code-ide--workspace-restore-data)
+
     ;; Mock session start
     (cl-letf* (((symbol-function 'claude-code-ide--start-session)
                 (lambda ()
@@ -2366,21 +2369,21 @@ have completed before cleanup.  Waits up to 5 seconds."
                ((symbol-function 'claude-code-ide-log)
                 (lambda (msg &rest args)
                   (push (apply #'format msg args) log-messages))))
-      
+
       (unwind-protect
           (progn
             ;; Call restoration
             (let ((result (claude-code-ide--restore-session-on-demand test-workspace-name)))
               (should result)
               (should session-started)
-              
+
               ;; Verify restoration was marked as completed
               (let ((restore-info (gethash test-workspace-name claude-code-ide--workspace-restore-data)))
                 (should (plist-get restore-info :restored)))
-              
+
               ;; Verify log message
               (should (member "Restored Claude session for workspace: test-workspace" log-messages))))
-        
+
         ;; Cleanup
         (when (file-directory-p test-directory)
           (delete-directory test-directory t))))))
@@ -2390,25 +2393,25 @@ have completed before cleanup.  Waits up to 5 seconds."
   (let* ((test-workspace-name "test-workspace")
          (test-directory "/nonexistent/directory")
          (test-state `(:directory ,test-directory
-                                 :workspace-name ,test-workspace-name))
+                                  :workspace-name ,test-workspace-name))
          (claude-code-ide--workspace-restore-data (make-hash-table :test 'equal))
          (session-started nil))
-    
+
     ;; Setup restoration data with nonexistent directory
-    (puthash test-workspace-name 
-              (list :state test-state :restored nil)
-              claude-code-ide--workspace-restore-data)
-    
+    (puthash test-workspace-name
+             (list :state test-state :restored nil)
+             claude-code-ide--workspace-restore-data)
+
     ;; Mock session start
     (cl-letf (((symbol-function 'claude-code-ide--start-session)
                (lambda ()
                  (setq session-started t))))
-      
+
       ;; Call restoration - should fail gracefully
       (let ((result (claude-code-ide--restore-session-on-demand test-workspace-name)))
         (should-not result)
         (should-not session-started)
-        
+
         ;; Restoration should remain incomplete
         (let ((restore-info (gethash test-workspace-name claude-code-ide--workspace-restore-data)))
           (should-not (plist-get restore-info :restored)))))))
@@ -2421,12 +2424,12 @@ have completed before cleanup.  Waits up to 5 seconds."
          (claude-code-ide--workspace-restore-data (make-hash-table :test 'equal))
          (restoration-attempted nil)
          (session-started nil))
-    
+
     ;; Setup restoration data
-    (puthash test-workspace-name 
-              (list :state (list :directory test-directory) :restored nil)
-              claude-code-ide--workspace-restore-data)
-    
+    (puthash test-workspace-name
+             (list :state (list :directory test-directory) :restored nil)
+             claude-code-ide--workspace-restore-data)
+
     ;; Mock functions
     (cl-letf* (((symbol-function 'claude-code-ide--get-workspace-name)
                 (lambda () test-workspace-name))
@@ -2438,16 +2441,16 @@ have completed before cleanup.  Waits up to 5 seconds."
                ((symbol-function 'claude-code-ide--start-session)
                 (lambda ()
                   (setq session-started t))))
-      
+
       (unwind-protect
           (progn
             ;; Call enhanced start function
             (claude-code-ide--enhanced-start-or-switch-workspace-session)
-            
+
             ;; Should attempt restoration first
             (should restoration-attempted)
             (should-not session-started))  ; Should not start new session if restoration succeeds
-        
+
         ;; Cleanup
         (when (file-directory-p test-directory)
           (delete-directory test-directory t))))))
@@ -2457,7 +2460,7 @@ have completed before cleanup.  Waits up to 5 seconds."
   (let* ((test-workspace-name "test-workspace")
          (mock-persp (list :name test-workspace-name))
          (log-messages '()))
-    
+
     ;; Mock persp functions with corrupted data
     (cl-letf* (((symbol-function 'persp-name)
                 (lambda (persp) (plist-get persp :name)))
@@ -2467,14 +2470,14 @@ have completed before cleanup.  Waits up to 5 seconds."
                ((symbol-function 'claude-code-ide-log)
                 (lambda (msg &rest args)
                   (push (apply #'format msg args) log-messages))))
-      
+
       ;; Call the restore hook with corrupted data
       (claude-code-ide--workspace-restore-hook mock-persp)
-      
+
       ;; Should handle gracefully with warning message
-      (should (cl-some (lambda (msg) 
-                        (string-match "Warning.*Failed to restore.*test-workspace" msg))
-                      log-messages)))))
+      (should (cl-some (lambda (msg)
+                         (string-match "Warning.*Failed to restore.*test-workspace" msg))
+                       log-messages)))))
 
 (ert-deftest test-claude-code-ide-persistence-hooks-registration ()
   "Test registration and unregistration of persistence hooks."
@@ -2483,7 +2486,7 @@ have completed before cleanup.  Waits up to 5 seconds."
          (removed-save-hooks '())
          (removed-restore-hooks '())
          (log-messages '()))
-    
+
     ;; Mock hook functions and persp-mode feature
     (cl-letf* (((symbol-function 'featurep)
                 (lambda (feature)
@@ -2505,13 +2508,13 @@ have completed before cleanup.  Waits up to 5 seconds."
                ((symbol-function 'claude-code-ide-log)
                 (lambda (msg &rest args)
                   (push (apply #'format msg args) log-messages))))
-      
+
       ;; Test registration
       (claude-code-ide--register-persistence-hooks)
       (should (member #'claude-code-ide--workspace-save-hook registered-save-hooks))
       (should (member #'claude-code-ide--workspace-restore-hook registered-restore-hooks))
       (should (member "Registered Claude workspace persistence hooks" log-messages))
-      
+
       ;; Test unregistration
       (claude-code-ide--unregister-persistence-hooks)
       (should (member #'claude-code-ide--workspace-save-hook removed-save-hooks))
@@ -2525,16 +2528,16 @@ have completed before cleanup.  Waits up to 5 seconds."
          (claude-code-ide--workspace-restore-data (make-hash-table :test 'equal))
          (serialization-times '())
          (restoration-times '()))
-    
+
     ;; Create many mock sessions
     (dotimes (i num-workspaces)
       (let* ((workspace-name (format "workspace-%d" i))
              (directory (format "/test/workspace-%d" i))
              (session `(:directory ,directory
-                                  :workspace-name ,workspace-name
-                                  :created (current-time))))
+                                   :workspace-name ,workspace-name
+                                   :created (current-time))))
         (puthash workspace-name session claude-code-ide--workspace-sessions)))
-    
+
     ;; Test serialization performance
     (let ((start-time (current-time)))
       (maphash (lambda (workspace-name session)
@@ -2546,7 +2549,7 @@ have completed before cleanup.  Waits up to 5 seconds."
       (let ((total-time (float-time (time-subtract (current-time) start-time))))
         ;; Performance check: should complete in reasonable time
         (should (< total-time 5.0))  ; Less than 5 seconds for 100 workspaces
-        
+
         ;; Average serialization time should be reasonable
         (let ((avg-time (/ (apply #'+ serialization-times) (length serialization-times))))
           (should (< avg-time 0.1)))))))  ; Less than 100ms per workspace on average
@@ -2595,9 +2598,9 @@ have completed before cleanup.  Waits up to 5 seconds."
        ;; Should fall back to default-directory
        (should (equal (claude-code-ide--get-working-directory)
                       (expand-file-name default-directory))))
-     
-     ;; Test with doom-project-root returning a value  
-     (cl-letf (((symbol-function 'doom-project-root) 
+
+     ;; Test with doom-project-root returning a value
+     (cl-letf (((symbol-function 'doom-project-root)
                 (lambda (&optional _) "/mock/doom/project/"))
                ((symbol-function 'featurep)
                 (lambda (feature) (eq feature 'doom))))
@@ -2611,15 +2614,15 @@ have completed before cleanup.  Waits up to 5 seconds."
     ;; Test setting and getting sessions for different workspaces
     (let ((session-a '(:workspace "test-a" :dir "/path/a"))
           (session-b '(:workspace "test-b" :dir "/path/b")))
-      
+
       ;; Set sessions for different workspaces
       (claude-code-ide--set-workspace-session session-a "test-a")
       (claude-code-ide--set-workspace-session session-b "test-b")
-      
+
       ;; Verify correct mapping
       (should (equal (claude-code-ide--get-workspace-session "test-a") session-a))
       (should (equal (claude-code-ide--get-workspace-session "test-b") session-b))
-      
+
       ;; Verify isolation
       (should-not (equal (claude-code-ide--get-workspace-session "test-a")
                          (claude-code-ide--get-workspace-session "test-b"))))))
@@ -2628,30 +2631,30 @@ have completed before cleanup.  Waits up to 5 seconds."
   "Test session isolation and memory management."
   (let ((claude-code-ide--workspace-sessions (make-hash-table :test 'equal))
         (initial-hash-count 0))
-    
+
     ;; Record initial state
     (setq initial-hash-count (hash-table-count claude-code-ide--workspace-sessions))
-    
+
     ;; Create multiple sessions
-    (claude-code-ide--set-workspace-session 
+    (claude-code-ide--set-workspace-session
      '(:workspace "session-1" :buffer "buf1") "session-1")
-    (claude-code-ide--set-workspace-session 
+    (claude-code-ide--set-workspace-session
      '(:workspace "session-2" :buffer "buf2") "session-2")
-    (claude-code-ide--set-workspace-session 
+    (claude-code-ide--set-workspace-session
      '(:workspace "session-3" :buffer "buf3") "session-3")
-    
+
     ;; Verify sessions exist
-    (should (= (hash-table-count claude-code-ide--workspace-sessions) 
+    (should (= (hash-table-count claude-code-ide--workspace-sessions)
                (+ initial-hash-count 3)))
-    
+
     ;; Clear one session
     (claude-code-ide--clear-workspace-session "session-2")
-    
+
     ;; Verify proper cleanup
-    (should (= (hash-table-count claude-code-ide--workspace-sessions) 
+    (should (= (hash-table-count claude-code-ide--workspace-sessions)
                (+ initial-hash-count 2)))
     (should-not (claude-code-ide--get-workspace-session "session-2"))
-    
+
     ;; Verify other sessions remain
     (should (claude-code-ide--get-workspace-session "session-1"))
     (should (claude-code-ide--get-workspace-session "session-3"))))
@@ -2660,25 +2663,25 @@ have completed before cleanup.  Waits up to 5 seconds."
   "Test hook registration and execution behavior."
   (let ((hook-called nil)
         (hook-args nil))
-    
+
     ;; Define test hook function
     (defun test-hook-function (persp)
       (setq hook-called t)
       (setq hook-args persp))
-    
+
     (unwind-protect
         (progn
           ;; Test hook registration
           (claude-code-ide--register-persistence-hooks)
-          
+
           ;; Simulate perspective activation
           (run-hook-with-args 'persp-activated-functions 'test-persp)
-          
+
           ;; Verify hook was called (if persp-mode is available)
           (when (featurep 'persp-mode)
             (should hook-called)
             (should (equal hook-args 'test-persp))))
-      
+
       ;; Cleanup
       (claude-code-ide--unregister-persistence-hooks)
       (fmakunbound 'test-hook-function))))
@@ -2687,22 +2690,22 @@ have completed before cleanup.  Waits up to 5 seconds."
   "Test error handling during workspace transitions."
   (let ((claude-code-ide--workspace-sessions (make-hash-table :test 'equal))
         (error-occurred nil))
-    
+
     ;; Set up a session that will cause an error during transition
-    (claude-code-ide--set-workspace-session 
+    (claude-code-ide--set-workspace-session
      '(:workspace "error-session" :invalid-key "bad-value") "error-session")
-    
+
     ;; Test graceful error handling
     (condition-case err
         (progn
           ;; This should handle errors gracefully
           (claude-code-ide--switch-to-workspace-session "error-session")
           (claude-code-ide--switch-to-workspace-session "nonexistent-session"))
-      (error 
+      (error
        (setq error-occurred err)))
-    
+
     ;; Should handle errors without crashing the system
-    (should (or (null error-occurred) 
+    (should (or (null error-occurred)
                 (stringp (error-message-string error-occurred))))))
 
 (ert-deftest claude-code-ide-test-comprehensive-edge-cases ()
@@ -2711,20 +2714,20 @@ have completed before cleanup.  Waits up to 5 seconds."
    (lambda ()
      ;; Test empty workspace name
      (should (stringp (claude-code-ide--get-workspace-name)))
-     
+
      ;; Test buffer name generation with nil directory (uses current directory)
      (should (stringp (claude-code-ide--get-buffer-name)))
-     
+
      ;; Test session cleanup with empty hash table
      (let ((claude-code-ide--workspace-sessions (make-hash-table :test 'equal)))
        (claude-code-ide--cleanup-dead-workspace-sessions)
        ;; Should not crash
        (should t))
-     
+
      ;; Test workspace session operations with nil values
      (should-not (claude-code-ide--get-workspace-session nil))
      (should-not (claude-code-ide--get-workspace-session ""))
-     
+
      ;; Test serialization with minimal session data
      (let ((minimal-session '(:workspace-name "test")))
        (should (listp (claude-code-ide--serialize-session-state minimal-session)))))))
@@ -2736,24 +2739,24 @@ have completed before cleanup.  Waits up to 5 seconds."
   (let ((claude-code-ide--workspace-sessions (make-hash-table :test 'equal))
         (workspace-a "project-alpha")
         (workspace-b "project-beta"))
-    
+
     ;; Setup: Create two workspaces with sessions
     (claude-code-ide-tests--create-mock-workspace workspace-a "/tmp/alpha")
     (claude-code-ide-tests--create-mock-workspace workspace-b "/tmp/beta")
-    
+
     ;; Test: Switch between workspaces
     (claude-code-ide--switch-to-workspace-session workspace-a)
     ;; Verify session exists for workspace-a
     (should (claude-code-ide--get-workspace-session workspace-a))
-    
+
     (claude-code-ide--switch-to-workspace-session workspace-b)
-    ;; Verify session exists for workspace-b  
+    ;; Verify session exists for workspace-b
     (should (claude-code-ide--get-workspace-session workspace-b))
-    
+
     ;; Verify: Sessions remain isolated
     (should-not (equal (claude-code-ide--get-workspace-session workspace-a)
                        (claude-code-ide--get-workspace-session workspace-b)))
-    
+
     ;; Cleanup
     (claude-code-ide--clear-workspace-session workspace-a)
     (claude-code-ide--clear-workspace-session workspace-b)))
@@ -2763,20 +2766,20 @@ have completed before cleanup.  Waits up to 5 seconds."
   (let ((claude-code-ide--workspace-sessions (make-hash-table :test 'equal))
         (claude-code-ide--workspace-restore-data (make-hash-table :test 'equal))
         (workspace-name "persistent-test"))
-    
+
     ;; Create a session with some state
     (claude-code-ide-tests--create-mock-workspace workspace-name "/tmp/persistent")
     (let ((session (claude-code-ide--get-workspace-session workspace-name)))
       (should session)
-      
+
       ;; Simulate switching away and back
       (claude-code-ide--switch-to-workspace-session "other-workspace")
       (claude-code-ide--switch-to-workspace-session workspace-name)
-      
+
       ;; Session should still exist and be accessible
       (should (claude-code-ide--get-workspace-session workspace-name))
       (should (equal (plist-get session :workspace-name) workspace-name)))
-    
+
     ;; Cleanup
     (claude-code-ide--clear-workspace-session workspace-name)))
 
@@ -2784,27 +2787,27 @@ have completed before cleanup.  Waits up to 5 seconds."
   "Test multiple concurrent workspace sessions."
   (let ((claude-code-ide--workspace-sessions (make-hash-table :test 'equal))
         (workspaces '("ws1" "ws2" "ws3" "ws4" "ws5")))
-    
+
     ;; Create multiple concurrent sessions
     (dolist (ws workspaces)
       (claude-code-ide-tests--create-mock-workspace ws (format "/tmp/%s" ws)))
-    
+
     ;; Verify all sessions exist independently
     (dolist (ws workspaces)
       (should (claude-code-ide--get-workspace-session ws))
-      (should (equal (plist-get (claude-code-ide--get-workspace-session ws) 
+      (should (equal (plist-get (claude-code-ide--get-workspace-session ws)
                                 :workspace-name) ws)))
-    
+
     ;; Test switching between all workspaces
     (dolist (ws workspaces)
       (claude-code-ide--switch-to-workspace-session ws)
       ;; Verify session is accessible after switching
       (should (claude-code-ide--get-workspace-session ws)))
-    
+
     ;; Cleanup all sessions
     (dolist (ws workspaces)
       (claude-code-ide--clear-workspace-session ws))
-    
+
     ;; Verify cleanup
     (should (= (hash-table-count claude-code-ide--workspace-sessions) 0))))
 
@@ -2813,17 +2816,17 @@ have completed before cleanup.  Waits up to 5 seconds."
   (let ((claude-code-ide--workspace-sessions (make-hash-table :test 'equal))
         (activation-calls '())
         (deactivation-calls '()))
-    
+
     ;; Mock hook functions to track calls
     (cl-letf (((symbol-function 'claude-code-ide--workspace-activated-h)
                (lambda (persp) (push persp activation-calls)))
               ((symbol-function 'claude-code-ide--workspace-deactivated-h)
                (lambda (persp) (push persp deactivation-calls))))
-      
+
       ;; Test workspace switching triggers hooks
       (claude-code-ide--switch-to-workspace-session "test-ws-1")
       (claude-code-ide--switch-to-workspace-session "test-ws-2")
-      
+
       ;; Verify hooks were called appropriately
       (should (>= (length activation-calls) 0))  ; May vary based on environment
       (should (>= (length deactivation-calls) 0)))))
@@ -2832,10 +2835,10 @@ have completed before cleanup.  Waits up to 5 seconds."
   "Test error recovery during workspace switching."
   (let ((claude-code-ide--workspace-sessions (make-hash-table :test 'equal))
         (original-switch-function (symbol-function 'claude-code-ide--switch-to-workspace-session)))
-    
+
     ;; Create a valid session first
     (claude-code-ide-tests--create-mock-workspace "valid-ws" "/tmp/valid")
-    
+
     ;; Mock switch function to cause an error on first call
     (let ((call-count 0))
       (cl-letf (((symbol-function 'claude-code-ide--switch-to-workspace-session)
@@ -2844,13 +2847,13 @@ have completed before cleanup.  Waits up to 5 seconds."
                    (if (= call-count 1)
                        (error "Simulated switching error")
                      (funcall original-switch-function ws-name)))))
-        
+
         ;; First switch should error
         (should-error (claude-code-ide--switch-to-workspace-session "valid-ws"))
-        
+
         ;; Second switch should succeed (error recovery)
         (should-not (claude-code-ide--switch-to-workspace-session "valid-ws"))))
-    
+
     ;; Cleanup
     (claude-code-ide--clear-workspace-session "valid-ws")))
 
@@ -2859,12 +2862,12 @@ have completed before cleanup.  Waits up to 5 seconds."
   (let ((claude-code-ide--workspace-sessions (make-hash-table :test 'equal))
         (switch-times '())
         (num-workspaces 20))
-    
+
     ;; Create multiple workspaces
     (dotimes (i num-workspaces)
-      (claude-code-ide-tests--create-mock-workspace 
+      (claude-code-ide-tests--create-mock-workspace
        (format "perf-ws-%d" i) (format "/tmp/perf-%d" i)))
-    
+
     ;; Measure switching times
     (dotimes (i num-workspaces)
       (let ((start-time (current-time))
@@ -2872,17 +2875,17 @@ have completed before cleanup.  Waits up to 5 seconds."
         (claude-code-ide--switch-to-workspace-session ws-name)
         (let ((elapsed (float-time (time-subtract (current-time) start-time))))
           (push elapsed switch-times))))
-    
+
     ;; Performance assertions
     (let ((avg-time (/ (apply #'+ switch-times) (length switch-times)))
           (max-time (apply #'max switch-times)))
-      
+
       ;; Average switch time should be under 100ms
       (should (< avg-time 0.1))
-      
+
       ;; Maximum switch time should be under 500ms
       (should (< max-time 0.5)))
-    
+
     ;; Cleanup
     (dotimes (i num-workspaces)
       (claude-code-ide--clear-workspace-session (format "perf-ws-%d" i)))))
@@ -2894,7 +2897,7 @@ have completed before cleanup.  Waits up to 5 seconds."
   (let ((claude-code-ide--workspace-sessions (make-hash-table :test 'equal))
         (startup-times '())
         (num-tests 10))
-    
+
     ;; Measure session creation times
     (dotimes (i num-tests)
       (let ((start-time (current-time))
@@ -2905,7 +2908,7 @@ have completed before cleanup.  Waits up to 5 seconds."
           (push elapsed startup-times))
         ;; Cleanup
         (claude-code-ide--clear-workspace-session ws-name)))
-    
+
     ;; Performance assertions from Issue-007: Session startup time < 2 seconds
     (let ((avg-time (/ (apply #'+ startup-times) (length startup-times)))
           (max-time (apply #'max startup-times)))
@@ -2917,23 +2920,23 @@ have completed before cleanup.  Waits up to 5 seconds."
   (let ((claude-code-ide--workspace-sessions (make-hash-table :test 'equal))
         (num-workspaces 50)
         (initial-gc-cons-threshold gc-cons-threshold))
-    
+
     ;; Set up memory monitoring
     (garbage-collect) ; Clean up before testing
     (let ((initial-memory (memory-use-counts)))
-      
+
       ;; Create many workspaces
       (dotimes (i num-workspaces)
-        (claude-code-ide-tests--create-mock-workspace 
+        (claude-code-ide-tests--create-mock-workspace
          (format "memory-test-%d" i) (format "/tmp/memory-%d" i)))
-      
+
       (garbage-collect) ; Force GC to get accurate memory reading
       (let ((final-memory (memory-use-counts)))
-        
+
         ;; Calculate memory growth (simplified check)
         ;; This is a basic test - real memory profiling would be more complex
         (should (< (hash-table-count claude-code-ide--workspace-sessions) 100))
-        
+
         ;; Cleanup
         (dotimes (i num-workspaces)
           (claude-code-ide--clear-workspace-session (format "memory-test-%d" i)))))))
@@ -2944,29 +2947,29 @@ have completed before cleanup.  Waits up to 5 seconds."
         (num-workspaces 100)
         (operation-count 0)
         (errors '()))
-    
+
     ;; Create many workspaces rapidly
     (dotimes (i num-workspaces)
       (condition-case err
           (progn
-            (claude-code-ide-tests--create-mock-workspace 
+            (claude-code-ide-tests--create-mock-workspace
              (format "stress-ws-%d" i) (format "/tmp/stress-%d" i))
             (setq operation-count (1+ operation-count)))
         (error (push err errors))))
-    
+
     ;; Perform rapid switching operations
     (dotimes (i 50)
       (condition-case err
           (progn
-            (claude-code-ide--switch-to-workspace-session 
+            (claude-code-ide--switch-to-workspace-session
              (format "stress-ws-%d" (random num-workspaces)))
             (setq operation-count (1+ operation-count)))
         (error (push err errors))))
-    
+
     ;; Verify system stability
     (should (>= operation-count (+ num-workspaces 25))) ; At least 75% operations succeeded
     (should (< (length errors) 10)) ; Less than 10% error rate
-    
+
     ;; Cleanup
     (dotimes (i num-workspaces)
       (claude-code-ide--clear-workspace-session (format "stress-ws-%d" i)))))
@@ -2976,29 +2979,29 @@ have completed before cleanup.  Waits up to 5 seconds."
   (let ((claude-code-ide--workspace-sessions (make-hash-table :test 'equal))
         (num-cycles 20)
         (workspaces-per-cycle 10))
-    
+
     ;; Perform multiple create/destroy cycles
     (dotimes (cycle num-cycles)
       (let ((cycle-workspaces '()))
-        
+
         ;; Create workspaces
         (dotimes (i workspaces-per-cycle)
           (let ((ws-name (format "leak-test-%d-%d" cycle i)))
-            (claude-code-ide-tests--create-mock-workspace 
+            (claude-code-ide-tests--create-mock-workspace
              ws-name (format "/tmp/leak-%d-%d" cycle i))
             (push ws-name cycle-workspaces)))
-        
+
         ;; Use workspaces
         (dolist (ws cycle-workspaces)
           (claude-code-ide--switch-to-workspace-session ws))
-        
+
         ;; Destroy workspaces
         (dolist (ws cycle-workspaces)
           (claude-code-ide--clear-workspace-session ws))))
-    
+
     ;; Verify no sessions remain
     (should (= (hash-table-count claude-code-ide--workspace-sessions) 0))
-    
+
     ;; Force garbage collection and verify cleanup
     (garbage-collect)
     (should (= (hash-table-count claude-code-ide--workspace-sessions) 0))))
@@ -3010,24 +3013,24 @@ have completed before cleanup.  Waits up to 5 seconds."
         (switch-count 200)
         (successful-switches 0)
         (errors '()))
-    
+
     ;; Create test workspaces
     (dolist (ws workspaces)
       (claude-code-ide-tests--create-mock-workspace ws (format "/tmp/%s" ws)))
-    
+
     ;; Perform rapid switching
     (dotimes (i switch-count)
       (condition-case err
           (progn
-            (claude-code-ide--switch-to-workspace-session 
+            (claude-code-ide--switch-to-workspace-session
              (nth (random (length workspaces)) workspaces))
             (setq successful-switches (1+ successful-switches)))
         (error (push err errors))))
-    
+
     ;; Performance and reliability assertions
     (should (>= successful-switches (* switch-count 0.95))) ; 95% success rate
     (should (< (length errors) (* switch-count 0.05)))     ; Less than 5% errors
-    
+
     ;; Cleanup
     (dolist (ws workspaces)
       (claude-code-ide--clear-workspace-session ws))))
@@ -3037,20 +3040,20 @@ have completed before cleanup.  Waits up to 5 seconds."
   (let ((claude-code-ide--workspace-sessions (make-hash-table :test 'equal))
         (num-workspaces 100)
         (serialization-times '()))
-    
+
     ;; Create many workspaces with complex session data
     (dotimes (i num-workspaces)
       (let* ((ws-name (format "serial-test-%d" i))
              (complex-session `(:workspace-name ,ws-name
-                               :directory ,(format "/tmp/serial-%d" i)
-                               :created ,(current-time)
-                               :process nil
-                               :buffer nil
-                               :metadata (:project-type "test"
-                                         :last-command "echo test"
-                                         :session-id ,(format "session-%d" i)))))
+                                                :directory ,(format "/tmp/serial-%d" i)
+                                                :created ,(current-time)
+                                                :process nil
+                                                :buffer nil
+                                                :metadata (:project-type "test"
+                                                                         :last-command "echo test"
+                                                                         :session-id ,(format "session-%d" i)))))
         (claude-code-ide--set-workspace-session complex-session ws-name)))
-    
+
     ;; Test serialization performance
     (maphash (lambda (ws-name session)
                (let ((start-time (current-time)))
@@ -3058,13 +3061,13 @@ have completed before cleanup.  Waits up to 5 seconds."
                  (let ((elapsed (float-time (time-subtract (current-time) start-time))))
                    (push elapsed serialization-times))))
              claude-code-ide--workspace-sessions)
-    
+
     ;; Performance assertions
     (let ((avg-time (/ (apply #'+ serialization-times) (length serialization-times)))
           (max-time (apply #'max serialization-times)))
       (should (< avg-time 0.01))  ; Average under 10ms per serialization
       (should (< max-time 0.05))) ; Max under 50ms per serialization
-    
+
     ;; Cleanup
     (dotimes (i num-workspaces)
       (claude-code-ide--clear-workspace-session (format "serial-test-%d" i)))))
@@ -3073,10 +3076,10 @@ have completed before cleanup.  Waits up to 5 seconds."
 (defun claude-code-ide-tests--create-mock-workspace (workspace-name directory)
   "Create a mock workspace session for testing."
   (let ((session `(:workspace-name ,workspace-name
-                   :directory ,directory
-                   :created ,(current-time)
-                   :process nil
-                   :buffer nil)))
+                                   :directory ,directory
+                                   :created ,(current-time)
+                                   :process nil
+                                   :buffer nil)))
     (claude-code-ide--set-workspace-session session workspace-name)))
 
 ;;; VTerm Integration Tests
@@ -3090,39 +3093,39 @@ have completed before cleanup.  Waits up to 5 seconds."
          (test-port nil)
          (vterm-environment nil)
          (vterm-mode t))
-    
+
     (unwind-protect
         (progn
           ;; Mock workspace name function
           (cl-letf (((symbol-function 'claude-code-ide--get-workspace-name)
                      (lambda () test-workspace)))
-            
-            ;; Start MCP server for test workspace  
+
+            ;; Start MCP server for test workspace
             (setq test-port (claude-code-ide-mcp-start test-workspace))
             (should (numberp test-port))
-            
+
             ;; Verify workspace is registered in the registry
             (should (equal test-port (claude-code-ide-mcp-get-workspace-port test-workspace)))
-            
+
             ;; Simulate being in an unmanaged vterm buffer (not named *claude-code*)
             (with-temp-buffer
               (rename-buffer "*vterm-test*")
               ;; Set vterm-mode flag to simulate being in vterm mode
               (setq-local vterm-mode t)
-              
+
               ;; Call the vterm setup function directly
               (claude-code-ide--setup-vterm-environment)
-              
+
               ;; Debug: Check what happened
               (message "Buffer: %s, vterm-mode: %s, workspace: %s, port: %s"
-                       (buffer-name) vterm-mode 
+                       (buffer-name) vterm-mode
                        (claude-code-ide--get-workspace-name)
                        (when (claude-code-ide--get-workspace-name)
                          (claude-code-ide-mcp-get-workspace-port (claude-code-ide--get-workspace-name))))
               (message "vterm-environment (local-var-p): %s, value: %s"
                        (local-variable-p 'vterm-environment (current-buffer))
                        vterm-environment)
-              
+
               ;; Verify environment variables were set
               (should (local-variable-p 'vterm-environment (current-buffer)))
               (should vterm-environment)
@@ -3130,7 +3133,7 @@ have completed before cleanup.  Waits up to 5 seconds."
               (should (member "ENABLE_IDE_INTEGRATION=true" vterm-environment))
               (should (member "TERM_PROGRAM=emacs" vterm-environment))
               (should (member "FORCE_CODE_TERMINAL=true" vterm-environment)))))
-      
+
       ;; Cleanup
       (when test-port
         (claude-code-ide-mcp-stop-session test-workspace))
@@ -3140,36 +3143,36 @@ have completed before cleanup.  Waits up to 5 seconds."
 (ert-deftest claude-code-ide-test-vterm-hook-managed-buffer-ignored ()
   "Test that managed vterm buffers (created by claude-code-ide) are ignored by the hook."
   (let ((original-env nil))
-    
+
     ;; Simulate being in a managed vterm buffer (named *claude-code*)
     (with-temp-buffer
       (rename-buffer "*claude-code-test*")
       (setq-local vterm-mode t)
       (setq-local vterm-environment nil)
       (setq original-env vterm-environment)
-      
+
       ;; Call the vterm setup function
       (claude-code-ide--setup-vterm-environment)
-      
+
       ;; Environment should not be modified for managed buffers
       (should (equal vterm-environment original-env)))))
 
 (ert-deftest claude-code-ide-test-vterm-hook-no-workspace ()
   "Test that vterm hook gracefully handles cases with no workspace."
   (let ((original-env nil))
-    
+
     (cl-letf (((symbol-function 'claude-code-ide--get-workspace-name)
                (lambda () nil)))
-      
+
       (with-temp-buffer
         (rename-buffer "*vterm-test*")
         (setq-local vterm-mode t)
         (setq-local vterm-environment nil)
         (setq original-env vterm-environment)
-        
+
         ;; Call the vterm setup function
         (claude-code-ide--setup-vterm-environment)
-        
+
         ;; Environment should not be modified when no workspace
         (should (equal vterm-environment original-env))))))
 
