@@ -193,22 +193,24 @@ This ensures session data is preserved during transitions."
 
 ;;; Workspace Lifecycle Hook Functions
 
-(defun claude-code-ide--workspace-activated-h (persp)
+(defun claude-code-ide--workspace-activated-h (type)
   "Handle workspace activation for Claude Code IDE.
 Switches to the Claude session associated with the activated workspace.
-This hook is called when persp-mode activates a workspace."
-  (when persp
+This hook is called when persp-mode activates a workspace.
+TYPE is either 'frame or 'window indicating the scope of activation."
+  (when-let ((persp (get-current-persp)))
     (let ((workspace-name (persp-name persp)))
-      (claude-code-ide-debug "Workspace activated: %s" workspace-name)
+      (claude-code-ide-debug "Workspace activated: %s (type: %s)" workspace-name type)
       (claude-code-ide--switch-to-workspace-session workspace-name))))
 
-(defun claude-code-ide--workspace-deactivated-h (persp)
+(defun claude-code-ide--workspace-deactivated-h (type)
   "Handle workspace deactivation for Claude Code IDE.
 Saves current session state before workspace switch.
-This hook is called before persp-mode deactivates a workspace."
-  (when persp
+This hook is called before persp-mode deactivates a workspace.
+TYPE is either 'frame or 'window indicating the scope of deactivation."
+  (when-let ((persp (get-current-persp)))
     (let ((workspace-name (persp-name persp)))
-      (claude-code-ide-debug "Workspace deactivating: %s" workspace-name)
+      (claude-code-ide-debug "Workspace deactivating: %s (type: %s)" workspace-name type)
       (claude-code-ide--save-current-session-state))))
 
 (defun claude-code-ide--get-workspace-session (&optional workspace-name)
