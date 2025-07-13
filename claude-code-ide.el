@@ -542,7 +542,7 @@ The MCP server is started and environment variables are set up."
 ;;;###autoload
 (defun claude-code-ide-server ()
   (interactive)
-  (claude-code-ide-mcp-start)
+  (claude-code-ide-mcp-start))
 
 (defun claude-code-ide-server-quit ()
   (interactive)
