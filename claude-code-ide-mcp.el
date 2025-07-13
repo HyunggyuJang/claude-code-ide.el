@@ -87,7 +87,7 @@
   "Get the project directory for the current buffer.
 Returns the expanded project root path if a project is found,
 otherwise returns nil."
-  claude-code-ide-project-root)
+  (claude-code-ide--get-working-directory))
 
 (defun claude-code-ide-mcp--get-session-for-project (project-dir)
   "Get the MCP session for PROJECT-DIR.
@@ -661,7 +661,7 @@ Optional SESSION contains the MCP session context."
   "Start the MCP server for PROJECT-DIRECTORY."
   (claude-code-ide-debug "=== Starting MCP server ===")
 
-  (let* ((project-dir (expand-file-name claude-code-ide-project-root))
+  (let* ((project-dir (expand-file-name (or project-directory (claude-code-ide--get-working-directory))))
          (existing-session (gethash project-dir claude-code-ide-mcp--sessions)))
 
     ;; If there's an existing session for this project, return its port

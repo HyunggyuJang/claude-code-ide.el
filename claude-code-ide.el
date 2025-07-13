@@ -140,8 +140,13 @@ window, allowing direct interaction with the diff controls."
           (file-name-nondirectory (directory-file-name directory))))
 
 (defun claude-code-ide--get-working-directory ()
-  "Get the current working directory (project root or current directory)."
-  claude-code-ide-project-root)
+  "Get current working directory for Claude Code IDE.
+Uses fallback chain: doom-project-root → default-directory → original constant."
+  (cond
+   ((and (featurep 'doom) (fboundp 'doom-project-root) (doom-project-root))
+    (doom-project-root))
+   (default-directory default-directory)
+   (t (expand-file-name "~/notes"))))
 
 (defun claude-code-ide--get-buffer-name (&optional directory)
   "Get the buffer name for the Claude Code session in DIRECTORY.
@@ -356,7 +361,9 @@ This function handles:
                                     buffer-name working-dir port resume terminal-only))
                (buffer (car buffer-and-process))
                (process (cdr buffer-and-process)))
-          (claude-code-ide--set-process process working-dir)
+          ;; Only track Claude CLI processes, not shell processes in terminal-only mode
+          (unless terminal-only
+            (claude-code-ide--set-process process working-dir))
           ;; Set up process sentinel to clean up when Claude exits
           (set-process-sentinel process
                                 (lambda (_proc event)
@@ -420,7 +427,7 @@ The MCP server is started and environment variables are set up."
 
 (defun claude-code-ide-server-quit ()
   (interactive)
-  (claude-code-ide-mcp-stop-session claude-code-ide-project-root))
+  (claude-code-ide-mcp-stop-session (claude-code-ide--get-working-directory)))
 
 ;;;###autoload
 (defun claude-code-ide-check-status ()

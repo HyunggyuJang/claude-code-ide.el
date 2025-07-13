@@ -32,8 +32,7 @@
 
 (require 'json)
 
-
-(defconst claude-code-ide-project-root (expand-file-name "~/notes"))
+(declare-function claude-code-ide--get-working-directory "claude-code-ide" ())
 
 ;;; Customization
 
@@ -58,9 +57,10 @@
   "Get current session context for logging."
   (if claude-code-ide-log-with-context
       (format "[%s]" (or (ignore-errors
-                           (file-name-nondirectory
-                            (directory-file-name
-                             claude-code-ide-project-root)))
+                           (when (fboundp 'claude-code-ide--get-working-directory)
+                             (file-name-nondirectory
+                              (directory-file-name
+                               (claude-code-ide--get-working-directory)))))
                          "no-project"))
     ""))
 
