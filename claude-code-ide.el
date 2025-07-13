@@ -63,6 +63,16 @@
 (declare-function claude-code-ide-mcp-session-client "claude-code-ide-mcp" (session))
 (declare-function claude-code-ide-mcp-send-at-mentioned "claude-code-ide-mcp" ())
 
+;; Doom Emacs function declarations
+(declare-function map! "doom-keybinds" (&rest rest))
+(declare-function doom-project-root "doom-lib" (&optional maybe-prompt))
+
+;; persp-mode function declarations
+(declare-function persp-name "persp-mode" (persp))
+(declare-function get-current-persp "persp-mode" (&optional frame window))
+(declare-function persp-add-buffer-parameter "persp-mode" (persp param-name param-value))
+(declare-function persp-get-buffer-parameter "persp-mode" (persp param-name))
+
 ;;; Customization
 
 (defgroup claude-code-ide nil
@@ -132,12 +142,98 @@ window, allowing direct interaction with the diff controls."
 (defvar claude-code-ide--processes (make-hash-table :test 'equal)
   "Hash table mapping project/directory roots to their Claude Code processes.")
 
+(defvar claude-code-ide--workspace-sessions (make-hash-table :test 'equal)
+  "Hash table mapping workspace names to Claude sessions.
+Key: workspace name (string)
+Value: session data structure containing process, directory, and other metadata.")
+
 ;;; Helper Functions
 
 (defun claude-code-ide--default-buffer-name (directory)
   "Generate default buffer name for DIRECTORY."
   (format "*claude-code[%s]*"
           (file-name-nondirectory (directory-file-name directory))))
+
+;;; Workspace Management Functions
+
+(defun claude-code-ide--get-workspace-name ()
+  "Get current workspace name for session mapping.
+Uses fallback chain: persp-mode → directory-based naming → default."
+  (cond
+   ((and (featurep 'persp-mode) (fboundp 'persp-name) (fboundp 'get-current-persp) (persp-name (get-current-persp)))
+    (persp-name (get-current-persp)))
+   ((claude-code-ide--get-working-directory)
+    (file-name-nondirectory (directory-file-name (claude-code-ide--get-working-directory))))
+   (t "default")))
+
+(defun claude-code-ide--switch-to-workspace-session (workspace-name)
+  "Switch to the Claude session associated with WORKSPACE-NAME.
+If a session exists for the workspace, display it.
+If no session exists, do nothing (user can start one manually)."
+  (when-let ((session (claude-code-ide--get-workspace-session workspace-name)))
+    (let* ((buffer (plist-get session :buffer))
+           (process (plist-get session :process)))
+      (when (and buffer (buffer-live-p buffer) process (process-live-p process))
+        (claude-code-ide--display-buffer-in-side-window buffer)
+        (claude-code-ide-debug "Switched to Claude session for workspace: %s" workspace-name)))))
+
+(defun claude-code-ide--save-current-session-state ()
+  "Save current session state before workspace switch.
+This ensures session data is preserved during transitions."
+  (let* ((workspace-name (claude-code-ide--get-workspace-name))
+         (session (claude-code-ide--get-workspace-session workspace-name)))
+    (when session
+      (let ((buffer (plist-get session :buffer)))
+        (when (and buffer (buffer-live-p buffer))
+          ;; Update session metadata with current state
+          (claude-code-ide--set-workspace-session
+           (plist-put session :last-active (current-time))
+           workspace-name)
+          (claude-code-ide-debug "Saved session state for workspace: %s" workspace-name))))))
+
+;;; Workspace Lifecycle Hook Functions
+
+(defun claude-code-ide--workspace-activated-h (persp)
+  "Handle workspace activation for Claude Code IDE.
+Switches to the Claude session associated with the activated workspace.
+This hook is called when persp-mode activates a workspace."
+  (when persp
+    (let ((workspace-name (persp-name persp)))
+      (claude-code-ide-debug "Workspace activated: %s" workspace-name)
+      (claude-code-ide--switch-to-workspace-session workspace-name))))
+
+(defun claude-code-ide--workspace-deactivated-h (persp)
+  "Handle workspace deactivation for Claude Code IDE.
+Saves current session state before workspace switch.
+This hook is called before persp-mode deactivates a workspace."
+  (when persp
+    (let ((workspace-name (persp-name persp)))
+      (claude-code-ide-debug "Workspace deactivating: %s" workspace-name)
+      (claude-code-ide--save-current-session-state))))
+
+(defun claude-code-ide--get-workspace-session (&optional workspace-name)
+  "Get the session for WORKSPACE-NAME or current workspace."
+  (gethash (or workspace-name (claude-code-ide--get-workspace-name))
+           claude-code-ide--workspace-sessions))
+
+(defun claude-code-ide--set-workspace-session (session &optional workspace-name)
+  "Set the SESSION for WORKSPACE-NAME or current workspace."
+  (puthash (or workspace-name (claude-code-ide--get-workspace-name))
+           session
+           claude-code-ide--workspace-sessions))
+
+(defun claude-code-ide--clear-workspace-session (&optional workspace-name)
+  "Clear the session for WORKSPACE-NAME or current workspace."
+  (remhash (or workspace-name (claude-code-ide--get-workspace-name))
+           claude-code-ide--workspace-sessions))
+
+(defun claude-code-ide--cleanup-dead-workspace-sessions ()
+  "Remove entries for dead sessions from the workspace sessions table."
+  (maphash (lambda (workspace-name session)
+             (let ((process (plist-get session :process)))
+               (unless (and process (process-live-p process))
+                 (remhash workspace-name claude-code-ide--workspace-sessions))))
+           claude-code-ide--workspace-sessions))
 
 (defun claude-code-ide--get-working-directory ()
   "Get current working directory for Claude Code IDE.
@@ -177,7 +273,14 @@ If DIRECTORY is not provided, use the current working directory."
   (maphash (lambda (directory process)
              (when (process-live-p process)
                (claude-code-ide--cleanup-on-exit directory)))
-           claude-code-ide--processes))
+           claude-code-ide--processes)
+  ;; Also cleanup workspace sessions directly
+  (maphash (lambda (workspace-name session)
+             (let ((process (plist-get session :process))
+                   (directory (plist-get session :directory)))
+               (when (and process (process-live-p process) directory)
+                 (claude-code-ide--cleanup-on-exit directory))))
+           claude-code-ide--workspace-sessions))
 
 ;; Ensure cleanup on Emacs exit
 (add-hook 'kill-emacs-hook #'claude-code-ide--cleanup-all-sessions)
@@ -220,6 +323,11 @@ If `claude-code-ide-focus-on-open' is non-nil, the window is selected."
         (progn
           ;; Remove from process table
           (remhash directory claude-code-ide--processes)
+          ;; Find and remove corresponding workspace session
+          (maphash (lambda (workspace-name session)
+                     (when (equal (plist-get session :directory) directory)
+                       (claude-code-ide--clear-workspace-session workspace-name)))
+                   claude-code-ide--workspace-sessions)
           ;; Stop MCP server for this project directory
           (claude-code-ide-mcp-stop-session directory)
           ;; Kill the vterm buffer if it exists
@@ -298,7 +406,7 @@ Signals an error if vterm fails to initialize."
          ;; Set vterm-shell based on terminal-only mode
          (vterm-shell (if terminal-only
                           (or (getenv "SHELL") "/bin/bash")  ; Use default shell for terminal-only
-                          claude-cmd))  ; Auto-launch Claude for normal mode
+                        claude-cmd))  ; Auto-launch Claude for normal mode
          ;; vterm uses vterm-environment for passing env vars
          (vterm-environment (append
                              (list (format "CLAUDE_CODE_SSE_PORT=%d" port)
@@ -343,11 +451,14 @@ This function handles:
 
   ;; Clean up any dead processes first
   (claude-code-ide--cleanup-dead-processes)
+  (claude-code-ide--cleanup-dead-workspace-sessions)
 
   (let* ((working-dir (claude-code-ide--get-working-directory))
+         (workspace-name (claude-code-ide--get-workspace-name))
          (buffer-name (claude-code-ide--get-buffer-name))
          (existing-buffer (get-buffer buffer-name))
-         (existing-process (claude-code-ide--get-process working-dir)))
+         (existing-process (claude-code-ide--get-process working-dir))
+         (existing-workspace-session (claude-code-ide--get-workspace-session workspace-name)))
 
     ;; If buffer exists and process is alive, toggle the window
     (if (and existing-buffer
@@ -361,9 +472,17 @@ This function handles:
                                     buffer-name working-dir port resume terminal-only))
                (buffer (car buffer-and-process))
                (process (cdr buffer-and-process)))
-          ;; Only track Claude CLI processes, not shell processes in terminal-only mode
+          ;; Track both directory-based process (for backward compatibility) and workspace session
           (unless terminal-only
-            (claude-code-ide--set-process process working-dir))
+            (claude-code-ide--set-process process working-dir)
+            ;; Store workspace session with metadata
+            (claude-code-ide--set-workspace-session
+             `(:process ,process
+                        :directory ,working-dir
+                        :buffer ,buffer
+                        :workspace-name ,workspace-name
+                        :created ,(current-time))
+             workspace-name))
           ;; Set up process sentinel to clean up when Claude exits
           (set-process-sentinel process
                                 (lambda (_proc event)
@@ -520,6 +639,262 @@ This simulates typing backslash followed by Enter, which Claude Code interprets 
   (interactive)
   (vterm-send-string "\\")
   (vterm-send-return))
+
+;;; Workspace Hook Management
+
+(defun claude-code-ide--enable-workspace-hooks ()
+  "Enable workspace lifecycle hooks for automatic session switching.
+Only registers hooks if persp-mode functions are available."
+  (when (and (featurep 'persp-mode)
+             (fboundp 'persp-name)
+             (boundp 'persp-activated-functions)
+             (boundp 'persp-before-deactivate-functions))
+    (add-hook 'persp-activated-functions #'claude-code-ide--workspace-activated-h)
+    (add-hook 'persp-before-deactivate-functions #'claude-code-ide--workspace-deactivated-h)
+    (claude-code-ide-debug "Workspace lifecycle hooks enabled")))
+
+(defun claude-code-ide--disable-workspace-hooks ()
+  "Disable workspace lifecycle hooks."
+  (remove-hook 'persp-activated-functions #'claude-code-ide--workspace-activated-h)
+  (remove-hook 'persp-before-deactivate-functions #'claude-code-ide--workspace-deactivated-h)
+  (claude-code-ide-debug "Workspace lifecycle hooks disabled"))
+
+;; Auto-enable hooks when module loads if persp-mode is available
+(when (featurep 'persp-mode)
+  (claude-code-ide--enable-workspace-hooks))
+
+;; Enable hooks when persp-mode is loaded later
+(eval-after-load 'persp-mode
+  '(claude-code-ide--enable-workspace-hooks))
+
+;;; Doom Workspace Command Family
+
+;;;###autoload
+(defun +workspace/claude-code (&optional arg)
+  "Start or switch to Claude Code session in current workspace.
+With prefix argument ARG, create new session regardless of existing session."
+  (interactive "P")
+  (if arg
+      (claude-code-ide--create-new-workspace-session)
+    (claude-code-ide--get-or-create-workspace-session)))
+
+;;;###autoload
+(defun +workspace/claude-code-kill ()
+  "Kill Claude Code session in current workspace."
+  (interactive)
+  (claude-code-ide--kill-workspace-session))
+
+;;;###autoload
+(defun +workspace/claude-code-restart ()
+  "Restart Claude Code session in current workspace."
+  (interactive)
+  (claude-code-ide--restart-workspace-session))
+
+;;;###autoload
+(defun +workspace/claude-code-switch ()
+  "Switch between Claude Code workspace sessions."
+  (interactive)
+  (claude-code-ide--switch-workspace-sessions))
+
+;;; Doom Workspace Command Implementation Functions
+
+(defun claude-code-ide--get-or-create-workspace-session ()
+  "Get existing workspace session or create new one with persistence support."
+  (claude-code-ide--enhanced-start-or-switch-workspace-session))
+
+(defun claude-code-ide--create-new-workspace-session ()
+  "Create a new Claude Code session for current workspace."
+  (let ((workspace-name (claude-code-ide--get-workspace-name)))
+    ;; Kill existing session if it exists
+    (claude-code-ide--kill-workspace-session-internal workspace-name)
+    ;; Start new session
+    (claude-code-ide--start-session)))
+
+(defun claude-code-ide--kill-workspace-session (&optional workspace-name)
+  "Kill Claude Code session for WORKSPACE-NAME or current workspace."
+  (let ((workspace-name (or workspace-name (claude-code-ide--get-workspace-name))))
+    (claude-code-ide--kill-workspace-session-internal workspace-name)))
+
+(defun claude-code-ide--kill-workspace-session-internal (workspace-name)
+  "Internal function to kill workspace session."
+  (when-let ((session (claude-code-ide--get-workspace-session workspace-name)))
+    (let ((process (plist-get session :process))
+          (directory (plist-get session :directory)))
+      (when (and process (process-live-p process))
+        (claude-code-ide--cleanup-on-exit directory)
+        (claude-code-ide-log "Claude Code session killed for workspace: %s" workspace-name)))))
+
+(defun claude-code-ide--restart-workspace-session ()
+  "Restart Claude Code session in current workspace."
+  (let ((workspace-name (claude-code-ide--get-workspace-name)))
+    (claude-code-ide--kill-workspace-session-internal workspace-name)
+    ;; Small delay to ensure cleanup completes
+    (run-with-timer 0.1 nil 
+                    (lambda () 
+                      (claude-code-ide--start-session)
+                      (claude-code-ide-log "Claude Code session restarted for workspace: %s" workspace-name)))))
+
+(defun claude-code-ide--switch-workspace-sessions ()
+  "Switch between active Claude Code workspace sessions."
+  (claude-code-ide--cleanup-dead-workspace-sessions)
+  (let ((active-sessions '()))
+    (maphash (lambda (workspace-name session)
+               (when (process-live-p (plist-get session :process))
+                 (push (cons workspace-name workspace-name) active-sessions)))
+             claude-code-ide--workspace-sessions)
+    (if active-sessions
+        (let ((choice (completing-read "Switch to Claude workspace session: "
+                                       active-sessions nil t)))
+          (when choice
+            (claude-code-ide--switch-to-workspace-session choice)))
+      (claude-code-ide-log "No active Claude Code workspace sessions"))))
+
+;;; Workspace Persistence Integration
+
+(defun claude-code-ide--serialize-session-state (session)
+  "Serialize Claude session state for workspace persistence.
+SESSION is a session plist containing :process, :directory, :buffer, etc.
+Returns a serializable plist without process objects."
+  (when session
+    (list :directory (plist-get session :directory)
+          :workspace-name (plist-get session :workspace-name)
+          :created (plist-get session :created)
+          :last-active (plist-get session :last-active)
+          :buffer-name (when-let ((buffer (plist-get session :buffer)))
+                         (and (buffer-live-p buffer) (buffer-name buffer)))
+          :mcp-config (claude-code-ide--get-mcp-session-config 
+                      (plist-get session :directory)))))
+
+(defun claude-code-ide--get-mcp-session-config (directory)
+  "Get serializable MCP session configuration for DIRECTORY."
+  (when-let ((mcp-session (gethash directory claude-code-ide-mcp--sessions)))
+    (list :project-dir (claude-code-ide-mcp-session-project-dir mcp-session)
+          :port (claude-code-ide-mcp-session-port mcp-session)
+          :original-tab (claude-code-ide-mcp-session-original-tab mcp-session))))
+
+(defun claude-code-ide--workspace-save-hook (persp)
+  "Save Claude session state with workspace persistence.
+This function is called by persp-mode when saving workspace state."
+  (when (and persp (persp-name persp))
+    (let ((workspace-name (persp-name persp)))
+      (when-let ((session (claude-code-ide--get-workspace-session workspace-name)))
+        (let ((serialized-state (claude-code-ide--serialize-session-state session)))
+          (when serialized-state
+            (persp-add-buffer-parameter persp 'claude-session-state serialized-state)
+            (claude-code-ide-log "Saved Claude session state for workspace: %s" workspace-name)))))))
+
+(defun claude-code-ide--workspace-restore-hook (persp)
+  "Restore Claude session from workspace persistence data.
+This function is called by persp-mode when loading workspace state."
+  (when (and persp (persp-name persp))
+    (let ((workspace-name (persp-name persp)))
+      (when-let ((state (persp-get-buffer-parameter persp 'claude-session-state)))
+        (claude-code-ide--restore-workspace-session workspace-name state)))))
+
+(defun claude-code-ide--restore-workspace-session (workspace-name state)
+  "Restore Claude session from serialized STATE for WORKSPACE-NAME.
+Handles graceful restoration with error handling for corrupted data."
+  (condition-case err
+      (when (and state (listp state))
+        (let ((directory (plist-get state :directory))
+              (buffer-name (plist-get state :buffer-name))
+              (created (plist-get state :created))
+              (last-active (plist-get state :last-active))
+              (mcp-config (plist-get state :mcp-config)))
+          
+          ;; Validate essential state data
+          (unless (and directory (file-directory-p directory))
+            (claude-code-ide-log "Warning: Workspace %s session directory no longer exists: %s" 
+                                workspace-name directory)
+            (throw 'restore-failed "Directory does not exist"))
+          
+          ;; Don't automatically restore sessions - just log availability
+          (claude-code-ide-log "Claude session state available for workspace %s (directory: %s)" 
+                              workspace-name 
+                              (file-name-nondirectory (directory-file-name directory)))
+          
+          ;; Store restoration data for on-demand restoration
+          (puthash workspace-name 
+                   (list :state state :restored nil)
+                   claude-code-ide--workspace-restore-data)))
+    
+    (error 
+     (claude-code-ide-log "Warning: Failed to restore Claude session for workspace %s: %s" 
+                         workspace-name (error-message-string err)))))
+
+(defvar claude-code-ide--workspace-restore-data (make-hash-table :test 'equal)
+  "Hash table storing workspace restoration data for on-demand restoration.")
+
+(defun claude-code-ide--restore-session-on-demand (workspace-name)
+  "Restore Claude session on-demand for WORKSPACE-NAME if restoration data exists."
+  (when-let ((restore-info (gethash workspace-name claude-code-ide--workspace-restore-data)))
+    (unless (plist-get restore-info :restored)
+      (let ((state (plist-get restore-info :state)))
+        (when state
+          (let ((directory (plist-get state :directory)))
+            (when (and directory (file-directory-p directory))
+              ;; Set the working directory context for session creation
+              (let ((default-directory directory))
+                (claude-code-ide--start-session))
+              
+              ;; Mark as restored
+              (puthash workspace-name 
+                       (plist-put restore-info :restored t)
+                       claude-code-ide--workspace-restore-data)
+              
+              (claude-code-ide-log "Restored Claude session for workspace: %s" workspace-name)
+              t)))))))
+
+(defun claude-code-ide--enhanced-start-or-switch-workspace-session ()
+  "Enhanced version that attempts restoration before creating new session."
+  (let ((workspace-name (claude-code-ide--get-workspace-name)))
+    (if-let ((existing-session (claude-code-ide--get-workspace-session workspace-name)))
+        (if (and (plist-get existing-session :process)
+                 (process-live-p (plist-get existing-session :process)))
+            ;; Switch to existing session
+            (claude-code-ide--switch-to-workspace-session workspace-name)
+          ;; Session exists but process is dead - try restoration first
+          (unless (claude-code-ide--restore-session-on-demand workspace-name)
+            ;; Restoration failed or no data - create new session
+            (claude-code-ide--start-session)))
+      ;; No existing session - try restoration first
+      (unless (claude-code-ide--restore-session-on-demand workspace-name)
+        ;; No restoration data - create new session
+        (claude-code-ide--start-session)))))
+
+;; Hook registration with persp-mode
+(defun claude-code-ide--register-persistence-hooks ()
+  "Register workspace persistence hooks with persp-mode."
+  (when (featurep 'persp-mode)
+    (add-hook 'persp-before-save-state-to-file-functions 
+              #'claude-code-ide--workspace-save-hook)
+    (add-hook 'persp-after-load-state-from-file-functions 
+              #'claude-code-ide--workspace-restore-hook)
+    (claude-code-ide-log "Registered Claude workspace persistence hooks")))
+
+(defun claude-code-ide--unregister-persistence-hooks ()
+  "Unregister workspace persistence hooks from persp-mode."
+  (when (featurep 'persp-mode)
+    (remove-hook 'persp-before-save-state-to-file-functions 
+                 #'claude-code-ide--workspace-save-hook)
+    (remove-hook 'persp-after-load-state-from-file-functions 
+                 #'claude-code-ide--workspace-restore-hook)
+    (claude-code-ide-log "Unregistered Claude workspace persistence hooks")))
+
+;; Auto-register hooks when module loads
+(when (featurep 'persp-mode)
+  (claude-code-ide--register-persistence-hooks))
+
+;;; Doom Keybindings
+
+;; Only define keybindings if we're in a Doom environment
+(when (and (featurep 'doom) (fboundp 'map!))
+  (map! :leader
+        (:prefix ("TAB" . "workspace")
+         :desc "Claude Code session" "c" #'+workspace/claude-code
+         :desc "Kill Claude session" "C" #'+workspace/claude-code-kill
+         :desc "Restart Claude session" "r" #'+workspace/claude-code-restart
+         :desc "Switch Claude sessions" "s" #'+workspace/claude-code-switch)))
 
 (provide 'claude-code-ide)
 
