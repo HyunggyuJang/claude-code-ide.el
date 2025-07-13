@@ -663,7 +663,7 @@ Returns the port number if an active session exists, nil otherwise."
     (when-let ((session (claude-code-ide-mcp--get-session-for-workspace workspace)))
       (claude-code-ide-mcp-session-port session))))
 
-(defun claude-code-ide-mcp-start (&optional workspace-name global)
+(defun claude-code-ide-mcp-start (&optional workspace-name)
   "Start the MCP server for WORKSPACE-NAME."
   (claude-code-ide-debug "=== Starting MCP server ===")
 
@@ -699,11 +699,6 @@ Returns the port number if an active session exists, nil otherwise."
         (claude-code-ide-debug "Project directory: %s" project-dir)
         (claude-code-ide-debug "Creating lockfile for port %d" port)
         (claude-code-ide-mcp--create-lockfile port project-dir)
-        (when global
-          (setenv "CLAUDE_CODE_SSE_PORT" (number-to-string port))
-          (setenv "ENABLE_IDE_INTEGRATION" "true")
-          (setenv "TERM_PROGRAM" "emacs")
-          (setenv "FORCE_CODE_TERMINAL" "true"))
 
         ;; Set up hooks for selection and buffer tracking
         ;; Too expensive
