@@ -885,6 +885,45 @@ Handles graceful restoration with error handling for corrupted data."
 (when (featurep 'persp-mode)
   (claude-code-ide--register-persistence-hooks))
 
+;;; VTerm Integration for Unmanaged Terminals
+
+(defun claude-code-ide--setup-vterm-environment ()
+  "Set up workspace-specific environment variables for vterm sessions.
+This hook runs on vterm-mode-hook to automatically configure environment
+variables for unmanaged vterm sessions (not created by claude-code-ide)."
+  (when (and (or (and (boundp 'vterm-mode) vterm-mode)
+                 (bound-and-true-p vterm-mode))
+             ;; Only apply to unmanaged vterm sessions
+             (not (string-match-p "\\*claude-code" (buffer-name))))
+    (let* ((workspace (claude-code-ide--get-workspace-name))
+           (port (when workspace
+                   (claude-code-ide-mcp-get-workspace-port workspace))))
+      (when port
+        (claude-code-ide-debug "Setting up vterm environment for workspace %s (port %d)" workspace port)
+        ;; Set buffer-local vterm-environment
+        (make-local-variable 'vterm-environment)
+        (setq vterm-environment 
+              (append (list (format "CLAUDE_CODE_SSE_PORT=%d" port)
+                            "ENABLE_IDE_INTEGRATION=true"
+                            "TERM_PROGRAM=emacs"
+                            "FORCE_CODE_TERMINAL=true")
+                      ;; Preserve existing environment variables
+                      (when (boundp 'vterm-environment) vterm-environment)))
+        (claude-code-ide-debug "Vterm environment configured: %s" vterm-environment)))))
+
+(defun claude-code-ide--enable-vterm-integration ()
+  "Enable automatic vterm integration for unmanaged terminals."
+  (when (fboundp 'vterm-mode)
+    (add-hook 'vterm-mode-hook #'claude-code-ide--setup-vterm-environment)))
+
+(defun claude-code-ide--disable-vterm-integration ()
+  "Disable automatic vterm integration."
+  (when (fboundp 'vterm-mode)
+    (remove-hook 'vterm-mode-hook #'claude-code-ide--setup-vterm-environment)))
+
+;; Enable vterm integration by default
+(claude-code-ide--enable-vterm-integration)
+
 ;;; Doom Keybindings
 
 ;; Only define keybindings if we're in a Doom environment

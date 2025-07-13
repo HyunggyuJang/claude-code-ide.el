@@ -3079,6 +3079,100 @@ have completed before cleanup.  Waits up to 5 seconds."
                    :buffer nil)))
     (claude-code-ide--set-workspace-session session workspace-name)))
 
+;;; VTerm Integration Tests
+
+(ert-deftest claude-code-ide-test-vterm-hook-integration ()
+  "Test that vterm-mode-hook correctly sets up environment variables for unmanaged terminals."
+  (let* ((temp-dir (make-temp-file "test-vterm-" t))
+         (claude-code-ide--workspace-sessions (make-hash-table :test 'equal))
+         (claude-code-ide-mcp--sessions (make-hash-table :test 'equal))
+         (test-workspace "test-vterm-workspace")
+         (test-port nil)
+         (vterm-environment nil)
+         (vterm-mode t))
+    
+    (unwind-protect
+        (progn
+          ;; Mock workspace name function
+          (cl-letf (((symbol-function 'claude-code-ide--get-workspace-name)
+                     (lambda () test-workspace)))
+            
+            ;; Start MCP server for test workspace  
+            (setq test-port (claude-code-ide-mcp-start test-workspace))
+            (should (numberp test-port))
+            
+            ;; Verify workspace is registered in the registry
+            (should (equal test-port (claude-code-ide-mcp-get-workspace-port test-workspace)))
+            
+            ;; Simulate being in an unmanaged vterm buffer (not named *claude-code*)
+            (with-temp-buffer
+              (rename-buffer "*vterm-test*")
+              ;; Set vterm-mode flag to simulate being in vterm mode
+              (setq-local vterm-mode t)
+              
+              ;; Call the vterm setup function directly
+              (claude-code-ide--setup-vterm-environment)
+              
+              ;; Debug: Check what happened
+              (message "Buffer: %s, vterm-mode: %s, workspace: %s, port: %s"
+                       (buffer-name) vterm-mode 
+                       (claude-code-ide--get-workspace-name)
+                       (when (claude-code-ide--get-workspace-name)
+                         (claude-code-ide-mcp-get-workspace-port (claude-code-ide--get-workspace-name))))
+              (message "vterm-environment (local-var-p): %s, value: %s"
+                       (local-variable-p 'vterm-environment (current-buffer))
+                       vterm-environment)
+              
+              ;; Verify environment variables were set
+              (should (local-variable-p 'vterm-environment (current-buffer)))
+              (should vterm-environment)
+              (should (member (format "CLAUDE_CODE_SSE_PORT=%d" test-port) vterm-environment))
+              (should (member "ENABLE_IDE_INTEGRATION=true" vterm-environment))
+              (should (member "TERM_PROGRAM=emacs" vterm-environment))
+              (should (member "FORCE_CODE_TERMINAL=true" vterm-environment)))))
+      
+      ;; Cleanup
+      (when test-port
+        (claude-code-ide-mcp-stop-session test-workspace))
+      (when (file-exists-p temp-dir)
+        (delete-directory temp-dir t)))))
+
+(ert-deftest claude-code-ide-test-vterm-hook-managed-buffer-ignored ()
+  "Test that managed vterm buffers (created by claude-code-ide) are ignored by the hook."
+  (let ((original-env nil))
+    
+    ;; Simulate being in a managed vterm buffer (named *claude-code*)
+    (with-temp-buffer
+      (rename-buffer "*claude-code-test*")
+      (setq-local vterm-mode t)
+      (setq-local vterm-environment nil)
+      (setq original-env vterm-environment)
+      
+      ;; Call the vterm setup function
+      (claude-code-ide--setup-vterm-environment)
+      
+      ;; Environment should not be modified for managed buffers
+      (should (equal vterm-environment original-env)))))
+
+(ert-deftest claude-code-ide-test-vterm-hook-no-workspace ()
+  "Test that vterm hook gracefully handles cases with no workspace."
+  (let ((original-env nil))
+    
+    (cl-letf (((symbol-function 'claude-code-ide--get-workspace-name)
+               (lambda () nil)))
+      
+      (with-temp-buffer
+        (rename-buffer "*vterm-test*")
+        (setq-local vterm-mode t)
+        (setq-local vterm-environment nil)
+        (setq original-env vterm-environment)
+        
+        ;; Call the vterm setup function
+        (claude-code-ide--setup-vterm-environment)
+        
+        ;; Environment should not be modified when no workspace
+        (should (equal vterm-environment original-env))))))
+
 (provide 'claude-code-ide-tests)
 
 ;;; claude-code-ide-tests.el ends here
