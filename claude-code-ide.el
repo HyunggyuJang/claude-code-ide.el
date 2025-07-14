@@ -56,10 +56,8 @@
 (require 'claude-code-ide-mcp)
 (require 'claude-code-ide-debug)
 
-(declare-function claude-code-ide-mcp-stop-session "claude-code-ide-mcp" (project-dir))
-(declare-function claude-code-ide-mcp--get-session-for-project "claude-code-ide-mcp" (project-dir))
+(declare-function claude-code-ide-mcp-stop-session "claude-code-ide-mcp" (workspace-name))
 (declare-function claude-code-ide-mcp-session-original-tab "claude-code-ide-mcp" (session))
-(declare-function claude-code-ide-mcp--get-buffer-project "claude-code-ide-mcp" ())
 (declare-function claude-code-ide-mcp-session-client "claude-code-ide-mcp" (session))
 (declare-function claude-code-ide-mcp-send-at-mentioned "claude-code-ide-mcp" ())
 
@@ -139,8 +137,6 @@ window, allowing direct interaction with the diff controls."
 (defvar claude-code-ide--cli-available nil
   "Whether Claude Code CLI is available and detected.")
 
-(defvar claude-code-ide--processes (make-hash-table :test 'equal)
-  "Hash table mapping project/directory roots to their Claude Code processes.")
 
 (defvar claude-code-ide--workspace-sessions (make-hash-table :test 'equal)
   "Hash table mapping workspace names to Claude sessions.
@@ -252,31 +248,10 @@ If DIRECTORY is not provided, use the current working directory."
   (funcall claude-code-ide-buffer-name-function
            (or directory (claude-code-ide--get-working-directory))))
 
-(defun claude-code-ide--get-process (&optional directory)
-  "Get the Claude Code process for DIRECTORY or current working directory."
-  (gethash (or directory (claude-code-ide--get-working-directory))
-           claude-code-ide--processes))
-
-(defun claude-code-ide--set-process (process &optional directory)
-  "Set the Claude Code PROCESS for DIRECTORY or current working directory."
-  (puthash (or directory (claude-code-ide--get-working-directory))
-           process
-           claude-code-ide--processes))
-
-(defun claude-code-ide--cleanup-dead-processes ()
-  "Remove entries for dead processes from the process table."
-  (maphash (lambda (directory process)
-             (unless (process-live-p process)
-               (remhash directory claude-code-ide--processes)))
-           claude-code-ide--processes))
 
 (defun claude-code-ide--cleanup-all-sessions ()
   "Clean up all active Claude Code sessions."
-  (maphash (lambda (directory process)
-             (when (process-live-p process)
-               (claude-code-ide--cleanup-on-exit directory)))
-           claude-code-ide--processes)
-  ;; Also cleanup workspace sessions directly
+  ;; Cleanup workspace sessions directly
   (maphash (lambda (workspace-name session)
              (let ((process (plist-get session :process))
                    (directory (plist-get session :directory)))
@@ -323,15 +298,14 @@ If `claude-code-ide-focus-on-open' is non-nil, the window is selected."
     (setq claude-code-ide--cleanup-in-progress t)
     (unwind-protect
         (progn
-          ;; Remove from process table
-          (remhash directory claude-code-ide--processes)
           ;; Find and remove corresponding workspace session
           (maphash (lambda (workspace-name session)
                      (when (equal (plist-get session :directory) directory)
                        (claude-code-ide--clear-workspace-session workspace-name)))
                    claude-code-ide--workspace-sessions)
-          ;; Stop MCP server for this project directory
-          (claude-code-ide-mcp-stop-session directory)
+          ;; Stop MCP server for this workspace
+          (let ((workspace-name (claude-code-ide--get-workspace-name)))
+            (claude-code-ide-mcp-stop-session workspace-name))
           ;; Kill the vterm buffer if it exists
           (let ((buffer-name (claude-code-ide--get-buffer-name directory)))
             (when-let ((buffer (get-buffer buffer-name)))
@@ -374,7 +348,7 @@ If the window is not visible, it will be shown in a side window."
       (progn
         (claude-code-ide--display-buffer-in-side-window existing-buffer)
         ;; Update the original tab when showing the window
-        (when-let ((session (claude-code-ide-mcp--get-session-for-project working-dir)))
+        (when-let ((session (claude-code-ide-mcp--get-session-for-workspace (claude-code-ide--get-workspace-name))))
           (when (fboundp 'tab-bar--current-tab)
             (setf (claude-code-ide-mcp-session-original-tab session) (tab-bar--current-tab))))
         (claude-code-ide-debug "Claude Code window shown")))))
@@ -431,187 +405,67 @@ Signals an error if vterm fails to initialize."
           (error "Vterm buffer was killed during initialization"))
         (cons buffer process)))))
 
-(defun claude-code-ide--start-session (&optional resume terminal-only)
-  "Start a Claude Code session for the current project.
-If RESUME is non-nil, start Claude with the -r (resume) flag.
-If TERMINAL-ONLY is non-nil, start just the terminal without auto-launching Claude.
+(defun claude-code-ide--start-session ()
+  "Start MCP server for the current workspace.
+This simplified function only handles MCP server startup for workspace-based sessions."
+  (let* ((workspace-name (claude-code-ide--get-workspace-name))
+         (existing-session (claude-code-ide-mcp--get-session-for-workspace workspace-name)))
 
-This function handles:
-- CLI availability checking
-- Dead process cleanup
-- Existing session detection and window toggling
-- New session creation with MCP server setup
-- Process and buffer lifecycle management"
-  (unless (or terminal-only (claude-code-ide--ensure-cli))
-    (user-error "Claude Code CLI not available.  Please install it and ensure it's in PATH"))
-
-  (unless (fboundp 'vterm)
-    (user-error "The package vterm is not installed.  Please install the vterm package"))
-
-  ;; Try to require vterm to ensure it's loaded
-  (require 'vterm nil t)
-
-  ;; Clean up any dead processes first
-  (claude-code-ide--cleanup-dead-processes)
-  (claude-code-ide--cleanup-dead-workspace-sessions)
-
-  (let* ((working-dir (claude-code-ide--get-working-directory))
-         (workspace-name (claude-code-ide--get-workspace-name))
-         (buffer-name (claude-code-ide--get-buffer-name))
-         (existing-buffer (get-buffer buffer-name))
-         (existing-process (claude-code-ide--get-process working-dir))
-         (existing-workspace-session (claude-code-ide--get-workspace-session workspace-name)))
-
-    ;; If buffer exists and process is alive, toggle the window
-    (if (and existing-buffer
-             (buffer-live-p existing-buffer)
-             existing-process)
-        (claude-code-ide--toggle-existing-window existing-buffer working-dir)
-      ;; Start MCP server with project directory
-      (let ((port (claude-code-ide-mcp-start working-dir)))
-        ;; Create new vterm session
-        (let* ((buffer-and-process (claude-code-ide--create-vterm-session
-                                    buffer-name working-dir port resume terminal-only))
-               (buffer (car buffer-and-process))
-               (process (cdr buffer-and-process)))
-          ;; Track both directory-based process (for backward compatibility) and workspace session
-          (unless terminal-only
-            (claude-code-ide--set-process process working-dir)
-            ;; Store workspace session with metadata
-            (claude-code-ide--set-workspace-session
-             `(:process ,process
-                        :directory ,working-dir
-                        :buffer ,buffer
-                        :workspace-name ,workspace-name
-                        :created ,(current-time))
-             workspace-name))
-          ;; Set up process sentinel to clean up when Claude exits
-          (set-process-sentinel process
-                                (lambda (_proc event)
-                                  (when (or (string-match "finished" event)
-                                            (string-match "exited" event)
-                                            (string-match "killed" event)
-                                            (string-match "terminated" event))
-                                    (claude-code-ide--cleanup-on-exit working-dir))))
-          ;; Also add buffer kill hook as a backup
-          (with-current-buffer buffer
-            (add-hook 'kill-buffer-hook
-                      (lambda ()
-                        (claude-code-ide--cleanup-on-exit working-dir))
-                      nil t)
-            ;; Add vterm exit hook to ensure buffer is killed when process exits
-            ;; vterm runs Claude directly, no shell involved
-            (add-hook 'vterm-exit-functions
-                      (lambda (&rest _)
-                        (when (buffer-live-p buffer)
-                          (kill-buffer buffer)))
-                      nil t))
-          ;; Display the buffer in a side window
-          (claude-code-ide--display-buffer-in-side-window buffer)
-          (if terminal-only
-              (claude-code-ide-log "Terminal opened for %s with MCP on port %d%s"
-                                   (file-name-nondirectory (directory-file-name working-dir))
-                                   port
-                                   (if claude-code-ide-cli-debug " (debug mode enabled)" ""))
-            (claude-code-ide-log "Claude Code %sstarted in %s with MCP on port %d%s"
-                                 (if resume "resumed and " "")
-                                 (file-name-nondirectory (directory-file-name working-dir))
-                                 port
-                                 (if claude-code-ide-cli-debug " (debug mode enabled)" ""))))))))
+    ;; If MCP session already exists for this workspace, show success message
+    (if existing-session
+        (claude-code-ide-log "MCP server already running for workspace '%s' on port %d"
+                             workspace-name
+                             (claude-code-ide-mcp-session-port existing-session))
+      ;; Start new MCP server for workspace
+      (let ((port (claude-code-ide-mcp-start workspace-name)))
+        (claude-code-ide-log "MCP server started for workspace '%s' on port %d"
+                             workspace-name
+                             port)))))
 
 ;;;###autoload
 (defun claude-code-ide ()
-  "Run Claude Code in a terminal for the current project or directory."
+  "Start MCP server for the current workspace."
   (interactive)
   (claude-code-ide--start-session))
 
-;;;###autoload
-(defun claude-code-ide-resume ()
-  "Resume Claude Code in a terminal for the current project or directory.
-This starts Claude with the -r (resume) flag to continue the previous
-conversation."
-  (interactive)
-  (claude-code-ide--start-session t))
 
-;;;###autoload
-(defun claude-code-ide-terminal ()
-  "Open a terminal with Claude Code environment setup but don't auto-launch Claude.
-Like VS Code extension - user can manually start Claude when ready.
-The MCP server is started and environment variables are set up."
-  (interactive)
-  (claude-code-ide--start-session nil t))
 
-;;;###autoload
-(defun claude-code-ide-server ()
-  (interactive)
-  (claude-code-ide-mcp-start))
-
-(defun claude-code-ide-server-quit ()
-  (interactive)
-  (claude-code-ide-mcp-stop-session (claude-code-ide--get-working-directory)))
-
-;;;###autoload
-(defun claude-code-ide-check-status ()
-  "Check Claude Code CLI status."
-  (interactive)
-  (claude-code-ide--detect-cli)
-  (if claude-code-ide--cli-available
-      (let ((version-output
-             (with-temp-buffer
-               (call-process claude-code-ide-cli-path nil t nil "--version")
-               (buffer-string))))
-        (claude-code-ide-log "Claude Code CLI version: %s" (string-trim version-output)))
-    (claude-code-ide-log "Claude Code is not installed.")))
 
 ;;;###autoload
 (defun claude-code-ide-stop ()
-  "Stop the Claude Code session for the current project or directory."
+  "Stop the MCP server for the current workspace."
   (interactive)
-  (let* ((working-dir (claude-code-ide--get-working-directory))
-         (buffer-name (claude-code-ide--get-buffer-name)))
-    (if-let ((buffer (get-buffer buffer-name)))
+  (let ((workspace-name (claude-code-ide--get-workspace-name)))
+    (if (claude-code-ide-mcp--get-session-for-workspace workspace-name)
         (progn
-          ;; Kill the buffer (cleanup will be handled by hooks)
-          ;; The process sentinel will handle cleanup when the process dies
-          (kill-buffer buffer)
-          (claude-code-ide-log "Stopping Claude Code in %s..."
-                               (file-name-nondirectory (directory-file-name working-dir))))
-      (claude-code-ide-log "No Claude Code session is running in this directory"))))
+          (claude-code-ide-mcp-stop-session workspace-name)
+          (claude-code-ide-log "Stopped MCP server for workspace '%s'" workspace-name))
+      (claude-code-ide-log "No MCP session running for workspace '%s'" workspace-name))))
 
 
-;;;###autoload
-(defun claude-code-ide-switch-to-buffer ()
-  "Switch to the Claude Code buffer for the current project.
-If the buffer is not visible, display it in the configured side window.
-If the buffer is already visible, switch focus to it."
-  (interactive)
-  (let ((buffer-name (claude-code-ide--get-buffer-name)))
-    (if-let ((buffer (get-buffer buffer-name)))
-        (if-let ((window (get-buffer-window buffer)))
-            ;; Buffer is visible, just focus it
-            (select-window window)
-          ;; Buffer exists but not visible, display it
-          (claude-code-ide--display-buffer-in-side-window buffer))
-      (user-error "No Claude Code session for this project.  Use M-x claude-code-ide to start one"))))
 
 ;;;###autoload
 (defun claude-code-ide-list-sessions ()
   "List all active Claude Code sessions and switch to selected one."
   (interactive)
-  (claude-code-ide--cleanup-dead-processes)
+  (claude-code-ide--cleanup-dead-workspace-sessions)
   (let ((sessions '()))
-    (maphash (lambda (directory _)
-               (push (cons (abbreviate-file-name directory)
-                           directory)
-                     sessions))
-             claude-code-ide--processes)
+    (maphash (lambda (workspace-name session)
+               (when (and (plist-get session :process)
+                          (process-live-p (plist-get session :process)))
+                 (let ((directory (plist-get session :directory)))
+                   (push (cons (format "%s [%s]" workspace-name (abbreviate-file-name directory))
+                               workspace-name)
+                         sessions))))
+             claude-code-ide--workspace-sessions)
     (if sessions
         (let ((choice (completing-read "Switch to Claude Code session: "
                                        sessions nil t)))
           (when choice
-            (let* ((directory (alist-get choice sessions nil nil #'string=))
-                   (buffer-name (funcall claude-code-ide-buffer-name-function directory)))
-              (if-let ((buffer (get-buffer buffer-name)))
+            (let* ((workspace-name (alist-get choice sessions nil nil #'string=))
+                   (session (claude-code-ide--get-workspace-session workspace-name))
+                   (buffer (when session (plist-get session :buffer))))
+              (if (and buffer (buffer-live-p buffer))
                   (claude-code-ide--display-buffer-in-side-window buffer)
                 (user-error "Buffer for session %s no longer exists" choice)))))
       (claude-code-ide-log "No active Claude Code sessions"))))
@@ -624,15 +478,6 @@ If the buffer is already visible, switch focus to it."
     (claude-code-ide-mcp-send-at-mentioned)
     (claude-code-ide-debug "Sent selection to Claude Code")))
 
-;;;###autoload
-(defun claude-code-ide-send-escape ()
-  "Send escape key to the Claude Code vterm buffer for the current project."
-  (interactive)
-  (let ((buffer-name (claude-code-ide--get-buffer-name)))
-    (if-let ((buffer (get-buffer buffer-name)))
-        (with-current-buffer buffer
-          (vterm-send-escape))
-      (user-error "No Claude Code session for this project"))))
 
 ;;;###autoload
 (defun claude-code-ide-insert-newline ()
@@ -738,12 +583,11 @@ With prefix argument ARG, create new session regardless of existing session."
 
 (defun claude-code-ide--switch-workspace-sessions ()
   "Switch between active Claude Code workspace sessions."
-  (claude-code-ide--cleanup-dead-workspace-sessions)
   (let ((active-sessions '()))
-    (maphash (lambda (workspace-name session)
-               (when (process-live-p (plist-get session :process))
+    (maphash (lambda (workspace-name _session)
+               (when (claude-code-ide-mcp--get-session-for-workspace workspace-name)
                  (push (cons workspace-name workspace-name) active-sessions)))
-             claude-code-ide--workspace-sessions)
+             claude-code-ide-mcp--sessions)
     (if active-sessions
         (let ((choice (completing-read "Switch to Claude workspace session: "
                                        active-sessions nil t)))
@@ -769,10 +613,16 @@ Returns a serializable plist without process objects."
 
 (defun claude-code-ide--get-mcp-session-config (directory)
   "Get serializable MCP session configuration for DIRECTORY."
-  (when-let ((mcp-session (gethash directory claude-code-ide-mcp--sessions)))
-    (list :project-dir (claude-code-ide-mcp-session-project-dir mcp-session)
-          :port (claude-code-ide-mcp-session-port mcp-session)
-          :original-tab (claude-code-ide-mcp-session-original-tab mcp-session))))
+  ;; Find workspace name associated with this directory
+  (let ((workspace-name nil))
+    (maphash (lambda (ws-name session)
+               (when (equal (plist-get session :directory) directory)
+                 (setq workspace-name ws-name)))
+             claude-code-ide--workspace-sessions)
+    (when-let ((mcp-session (claude-code-ide-mcp--get-session-for-workspace workspace-name)))
+      (list :project-dir (claude-code-ide-mcp-session-project-dir mcp-session)
+            :port (claude-code-ide-mcp-session-port mcp-session)
+            :original-tab (claude-code-ide-mcp-session-original-tab mcp-session)))))
 
 (defun claude-code-ide--workspace-save-hook (persp)
   "Save Claude session state with workspace persistence.

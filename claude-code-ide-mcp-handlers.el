@@ -38,8 +38,6 @@
 (declare-function claude-code-ide-debug "claude-code-ide-debug" (format-string &rest args))
 (declare-function claude-code-ide-mcp-complete-deferred "claude-code-ide-mcp" (method result &optional unique-key))
 (declare-function claude-code-ide-mcp--get-current-session "claude-code-ide-mcp" ())
-(declare-function claude-code-ide-mcp--get-session-for-project "claude-code-ide-mcp" (project-dir))
-(declare-function claude-code-ide-mcp--get-buffer-project "claude-code-ide-mcp" ())
 (declare-function claude-code-ide-mcp-session-active-diffs "claude-code-ide-mcp" (session))
 (declare-function claude-code-ide-mcp-session-original-tab "claude-code-ide-mcp" (session))
 (declare-function ediff-really-quit "ediff-util" (reverse-default-keep-variants))
@@ -317,7 +315,8 @@ ARGUMENTS should contain:
 (defun claude-code-ide-mcp-handle-get-open-editors (_arguments)
   "Get list of all open editors/buffers with file paths."
   (let ((editors '())
-        (project-dir (claude-code-ide-mcp--get-buffer-project)))
+        (project-dir (when-let ((session (claude-code-ide-mcp--get-current-session)))
+                       (claude-code-ide-mcp-session-project-dir session))))
     (dolist (buffer (buffer-list))
       (when-let ((file (buffer-file-name buffer)))
         ;; Only include files within the project directory
@@ -335,7 +334,8 @@ ARGUMENTS should contain:
 (defun claude-code-ide-mcp-handle-get-workspace-folders (_arguments)
   "Get the current workspace folders (project roots)."
   ;; Return the specific project directory for this MCP instance
-  (let ((project-dir (or (claude-code-ide-mcp--get-buffer-project)
+  (let ((project-dir (or (when-let ((session (claude-code-ide-mcp--get-current-session)))
+                           (claude-code-ide-mcp-session-project-dir session))
                          default-directory)))
     `((folders . ,(vconcat (list (expand-file-name project-dir)))))))
 
@@ -639,15 +639,7 @@ SESSION is the MCP session to use - if not provided, tries to determine it."
                      (claude-code-ide-mcp--cleanup-diff tab-name current-session)
                      (setq closed-count (1+ closed-count)))
                    session-diffs))
-      ;; Fallback to project directory if no current session
-      (when-let ((project-dir (claude-code-ide-mcp--get-buffer-project)))
-        (when-let ((session (claude-code-ide-mcp--get-session-for-project
-                             project-dir)))
-          (let ((session-diffs (claude-code-ide-mcp-session-active-diffs session)))
-            (maphash (lambda (tab-name _diff-info)
-                       (claude-code-ide-mcp--cleanup-diff tab-name session)
-                       (setq closed-count (1+ closed-count)))
-                     session-diffs)))))
+)
     ;; Return success in VS Code format
     (list `((type . "text")
             (text . ,(format "CLOSED_%d_DIFF_TABS" closed-count))))))

@@ -189,8 +189,7 @@
 
 (defmacro claude-code-ide-test-with-workspace-session-mocks (&rest body)
   "Execute BODY with workspace session mocking setup."
-  `(let ((claude-code-ide--workspace-sessions (make-hash-table :test 'equal))
-         (claude-code-ide--processes (make-hash-table :test 'equal)))
+  `(let ((claude-code-ide--workspace-sessions (make-hash-table :test 'equal)))
      (cl-letf (((symbol-function 'claude-code-ide-debug) #'ignore)
                ((symbol-function 'claude-code-ide-log) #'ignore))
        ,@body)))
@@ -212,9 +211,11 @@ executes TEST-BODY, and ensures cleanup even if TEST-BODY fails."
       (delete-directory temp-dir t))))
 
 (defun claude-code-ide-tests--clear-processes ()
-  "Clear the process hash table for testing.
-Ensures a clean state before each test that involves process management."
-  (clrhash claude-code-ide--processes)
+  "Clear workspace sessions and MCP sessions for testing.
+Ensures a clean state before each test that involves session management."
+  ;; Clear workspace sessions
+  (when (boundp 'claude-code-ide--workspace-sessions)
+    (clrhash claude-code-ide--workspace-sessions))
   ;; Also clear MCP sessions
   (when (boundp 'claude-code-ide-mcp--sessions)
     (clrhash claude-code-ide-mcp--sessions)))
@@ -277,51 +278,7 @@ have completed before cleanup.  Waits up to 5 seconds."
     (should (equal (funcall claude-code-ide-buffer-name-function nil)
                    "*custom[none]*"))))
 
-(ert-deftest claude-code-ide-test-process-management ()
-  "Test process storage and retrieval."
-  (claude-code-ide-tests--clear-processes)
-  (unwind-protect
-      (claude-code-ide-tests--with-temp-directory
-       (lambda ()
-         (let ((dir (claude-code-ide--get-working-directory))
-               (mock-process 'mock-process))
-           ;; Initially no process
-           (should (null (claude-code-ide--get-process dir)))
 
-           ;; Set a process
-           (claude-code-ide--set-process mock-process dir)
-           (should (eq (claude-code-ide--get-process dir) mock-process))
-
-           ;; Get process without specifying directory
-           (should (eq (claude-code-ide--get-process) mock-process)))))
-    (claude-code-ide-tests--clear-processes)))
-
-(ert-deftest claude-code-ide-test-cleanup-dead-processes ()
-  "Test cleanup of dead processes."
-  (claude-code-ide-tests--clear-processes)
-  (unwind-protect
-      (let* ((live-process (make-process :name "test-live"
-                                         :command '("sleep" "10")
-                                         :buffer nil))
-             (dead-process-name "test-dead"))
-        ;; Create a mock dead process
-        (puthash "/dir1" live-process claude-code-ide--processes)
-        (puthash "/dir2" dead-process-name claude-code-ide--processes)
-
-        ;; Before cleanup
-        (should (= (hash-table-count claude-code-ide--processes) 2))
-
-        ;; Run cleanup
-        (claude-code-ide--cleanup-dead-processes)
-
-        ;; After cleanup - only live process remains
-        (should (= (hash-table-count claude-code-ide--processes) 1))
-        (should (gethash "/dir1" claude-code-ide--processes))
-        (should (null (gethash "/dir2" claude-code-ide--processes)))
-
-        ;; Clean up the live process
-        (delete-process live-process))
-    (claude-code-ide-tests--clear-processes)))
 
 ;;; Tests for CLI Detection
 
@@ -351,122 +308,29 @@ have completed before cleanup.  Waits up to 5 seconds."
 
 ;;; Command Tests
 
-(ert-deftest claude-code-ide-test-run-without-cli ()
-  "Test run command when CLI is not available."
-  (let ((claude-code-ide--cli-available nil)
-        (claude-code-ide-cli-path "nonexistent-claude-cli"))
-    (should-error (claude-code-ide)
-                  :type 'user-error)))
 
-(ert-deftest claude-code-ide-test-run-without-vterm ()
-  "Test run command when vterm is not available."
-  (let ((claude-code-ide--cli-available t)
-        (claude-code-ide-cli-path "echo")
-        (orig-fboundp (symbol-function 'fboundp)))
-    (cl-letf (((symbol-function 'fboundp)
-               (lambda (sym) (if (eq sym 'vterm) nil (funcall orig-fboundp sym)))))
-      (should-error (claude-code-ide)
-                    :type 'user-error))))
 
 (ert-deftest claude-code-ide-test-run-with-cli ()
-  "Test successful run command execution."
-  (claude-code-ide-tests--clear-processes)
-  (unwind-protect
-      (claude-code-ide-tests--with-temp-directory
-       (lambda ()
-         (let ((claude-code-ide--cli-available t)
-               (claude-code-ide-cli-path "echo")
-               (created-buffers '()))
-           ;; Mock vterm and related functions
-           (cl-letf (((symbol-function 'vterm)
-                      (lambda (&optional buffer-name)
-                        (let ((buffer (generate-new-buffer (or buffer-name "*claude-code-ide-test*"))))
-                          (push buffer created-buffers)
-                          (with-current-buffer buffer
-                            (setq major-mode 'vterm-mode)
-                            (setq vterm--process 'mock-process))
-                          buffer)))
-                     ((symbol-function 'get-buffer-process)
-                      (lambda (_buffer) 'mock-process))
-                     ((symbol-function 'set-process-sentinel) #'ignore)
-                     ((symbol-function 'process-kill-buffer-query-function) (lambda () t))
-                     ((symbol-function 'claude-code-ide--display-buffer-in-side-window) #'ignore))
-             ;; Run claude-code-ide
-             (claude-code-ide)
-
-             ;; Check that buffer was created
-             (let ((buffer-name (claude-code-ide--get-buffer-name)))
-               (should (get-buffer buffer-name))
-
-               ;; Check that process was registered
-               (should (claude-code-ide--get-process))
-
-               ;; Wait for process to finish and clean up
-               (claude-code-ide-tests--wait-for-process (get-buffer buffer-name))
-               ;; Kill the buffer explicitly since we're in batch mode
-               (when (get-buffer buffer-name)
-                 (kill-buffer buffer-name)))
-
-             ;; Clean up any created buffers
-             (dolist (buffer created-buffers)
-               (when (buffer-live-p buffer)
-                 (kill-buffer buffer)))))))
-    (claude-code-ide-tests--clear-processes)))
+  "Test simplified MCP server startup."
+  (let ((claude-code-ide-mcp--sessions (make-hash-table :test 'equal)))
+    ;; Start MCP server
+    (claude-code-ide)
+    ;; Should create MCP session for workspace
+    (should (claude-code-ide-mcp--get-session-for-workspace (claude-code-ide--get-workspace-name)))))
 
 (ert-deftest claude-code-ide-test-run-existing-session ()
-  "Test run command when session already exists."
-  (claude-code-ide-tests--clear-processes)
-  (unwind-protect
-      (claude-code-ide-tests--with-temp-directory
-       (lambda ()
-         (let ((claude-code-ide--cli-available t)
-               (claude-code-ide-cli-path "echo")
-               (created-buffers '()))
-           ;; Mock vterm and related functions
-           (cl-letf (((symbol-function 'vterm)
-                      (lambda (&optional buffer-name)
-                        (let ((buffer (generate-new-buffer (or buffer-name "*claude-code-ide-test*"))))
-                          (push buffer created-buffers)
-                          (with-current-buffer buffer
-                            (setq major-mode 'vterm-mode)
-                            (setq vterm--process 'mock-process))
-                          buffer)))
-                     ((symbol-function 'get-buffer-process)
-                      (lambda (_buffer) 'mock-process))
-                     ((symbol-function 'set-process-sentinel) #'ignore)
-                     ((symbol-function 'process-kill-buffer-query-function) (lambda () t))
-                     ((symbol-function 'claude-code-ide--display-buffer-in-side-window) #'ignore))
-             ;; Start first session
-             (claude-code-ide)
-             (let* ((buffer-name (claude-code-ide--get-buffer-name))
-                    (first-buffer (get-buffer buffer-name)))
+  "Test MCP server when session already exists."
+  (let ((claude-code-ide-mcp--sessions (make-hash-table :test 'equal))
+        (workspace-name (claude-code-ide--get-workspace-name)))
+    ;; Start first session
+    (claude-code-ide)
+    (let ((first-session (claude-code-ide-mcp--get-session-for-workspace workspace-name)))
+      ;; Start again - should use existing session
+      (claude-code-ide)
+      (let ((second-session (claude-code-ide-mcp--get-session-for-workspace workspace-name)))
+        ;; Should be the same session
+        (should (eq first-session second-session))))))
 
-               ;; Verify we have the buffer
-               (should first-buffer)
-
-               ;; Try to run again - should not create new buffer
-               (claude-code-ide)
-
-               ;; Should still have same buffer
-               (should (eq (get-buffer buffer-name) first-buffer))
-
-               ;; Wait for process and clean up
-               (claude-code-ide-tests--wait-for-process first-buffer)
-               (kill-buffer first-buffer))
-
-             ;; Clean up any created buffers
-             (dolist (buffer created-buffers)
-               (when (buffer-live-p buffer)
-                 (kill-buffer buffer)))))))
-    (claude-code-ide-tests--clear-processes)))
-
-(ert-deftest claude-code-ide-test-check-status ()
-  "Test status check command."
-  (let ((claude-code-ide-cli-path "echo")
-        (claude-code-ide--cli-available nil))
-    ;; Should not error and should detect CLI
-    (claude-code-ide-check-status)
-    (should claude-code-ide--cli-available)))
 
 (ert-deftest claude-code-ide-test-stop-no-session ()
   "Test stop command when no session is running."
@@ -479,58 +343,19 @@ have completed before cleanup.  Waits up to 5 seconds."
     (claude-code-ide-tests--clear-processes)))
 
 (ert-deftest claude-code-ide-test-stop-with-session ()
-  "Test stop command with active session."
-  (claude-code-ide-tests--clear-processes)
-  (unwind-protect
-      (claude-code-ide-tests--with-temp-directory
-       (lambda ()
-         (let ((claude-code-ide--cli-available t)
-               (claude-code-ide-cli-path "echo")
-               (created-buffers '()))
-           ;; Mock vterm and related functions
-           (cl-letf (((symbol-function 'vterm)
-                      (lambda (&optional buffer-name)
-                        (let ((buffer (generate-new-buffer (or buffer-name "*claude-code-ide-test*"))))
-                          (push buffer created-buffers)
-                          (with-current-buffer buffer
-                            (setq major-mode 'vterm-mode)
-                            (setq vterm--process 'mock-process))
-                          buffer)))
-                     ((symbol-function 'get-buffer-process)
-                      (lambda (_buffer) 'mock-process))
-                     ((symbol-function 'set-process-sentinel) #'ignore)
-                     ((symbol-function 'process-kill-buffer-query-function) (lambda () t))
-                     ((symbol-function 'claude-code-ide--display-buffer-in-side-window) #'ignore))
-             ;; Start a session
-             (claude-code-ide)
-             (let ((buffer-name (claude-code-ide--get-buffer-name)))
-               ;; Verify session exists
-               (should (get-buffer buffer-name))
-               (should (claude-code-ide--get-process))
+  "Test stop command with active MCP session."
+  (let ((claude-code-ide-mcp--sessions (make-hash-table :test 'equal))
+        (workspace-name (claude-code-ide--get-workspace-name)))
+    ;; Start MCP server
+    (claude-code-ide)
+    (should (claude-code-ide-mcp--get-session-for-workspace workspace-name))
+    
+    ;; Stop MCP server
+    (claude-code-ide-mcp-stop-session workspace-name)
+    
+    ;; Session should be removed
+    (should-not (claude-code-ide-mcp--get-session-for-workspace workspace-name))))
 
-               ;; Wait for process to finish before stopping
-               (claude-code-ide-tests--wait-for-process (get-buffer buffer-name))
-
-               ;; Stop the session
-               (claude-code-ide-stop)
-
-               ;; Verify session is stopped
-               (should (null (get-buffer buffer-name)))
-               (should (null (claude-code-ide--get-process))))
-
-             ;; Clean up any created buffers
-             (dolist (buffer created-buffers)
-               (when (buffer-live-p buffer)
-                 (kill-buffer buffer)))))))
-    (claude-code-ide-tests--clear-processes)))
-
-(ert-deftest claude-code-ide-test-switch-to-buffer-no-session ()
-  "Test `switch-to-buffer' command when no session exists."
-  (claude-code-ide-tests--clear-processes)
-  (unwind-protect
-      (should-error (claude-code-ide-switch-to-buffer)
-                    :type 'user-error)
-    (claude-code-ide-tests--clear-processes)))
 
 
 (ert-deftest claude-code-ide-test-list-sessions-empty ()
@@ -549,12 +374,12 @@ have completed before cleanup.  Waits up to 5 seconds."
         ;; Test that list-sessions works with no sessions
         (claude-code-ide-list-sessions)
 
-        ;; Manually add mock entries to the process table
-        (puthash "/tmp/project1" (current-buffer) claude-code-ide--processes)
-        (puthash "/tmp/project2" (current-buffer) claude-code-ide--processes)
+        ;; Manually add mock entries to the workspace sessions table
+        (puthash "workspace1" `(:process ,(current-buffer) :directory "/tmp/project1" :buffer ,(current-buffer)) claude-code-ide--workspace-sessions)
+        (puthash "workspace2" `(:process ,(current-buffer) :directory "/tmp/project2" :buffer ,(current-buffer)) claude-code-ide--workspace-sessions)
 
         ;; Verify we have 2 entries
-        (should (= (hash-table-count claude-code-ide--processes) 2))
+        (should (= (hash-table-count claude-code-ide--workspace-sessions) 2))
 
         ;; List sessions should work without error
         (claude-code-ide-list-sessions))
@@ -688,15 +513,10 @@ have completed before cleanup.  Waits up to 5 seconds."
 
 (ert-deftest claude-code-ide-test-error-handling ()
   "Test error handling in various scenarios."
-  ;; Test with nil CLI path
-  (let ((claude-code-ide-cli-path nil)
-        (claude-code-ide--cli-available nil))
-    (should-error (claude-code-ide) :type 'user-error))
-
-  ;; Test with empty CLI path
-  (let ((claude-code-ide-cli-path "")
-        (claude-code-ide--cli-available nil))
-    (should-error (claude-code-ide) :type 'user-error)))
+  ;; With simplified MCP-only architecture, claude-code-ide should not error
+  ;; It just starts MCP server for the workspace and returns log message
+  (let ((claude-code-ide-mcp--sessions (make-hash-table :test 'equal)))
+    (should (stringp (claude-code-ide)))))
 
 ;;; Run all tests
 
@@ -717,11 +537,11 @@ have completed before cleanup.  Waits up to 5 seconds."
               ((symbol-function 'tab-bar--current-tab)
                (lambda () mock-tab))
               (tab-bar-mode tab-bar-mode-enabled))
-      ;; Start MCP server
-      (let ((port (claude-code-ide-mcp-start temp-dir)))
+      ;; Start MCP server (will use current workspace name)
+      (let ((port (claude-code-ide-mcp-start)))
         (should port)
-        ;; Get the session
-        (let ((session (gethash temp-dir claude-code-ide-mcp--sessions)))
+        ;; Get the session by workspace name  
+        (let ((session (claude-code-ide-mcp--get-current-session)))
           (should session)
           ;; Check that tab was captured
           (should (equal (claude-code-ide-mcp-session-original-tab session) mock-tab))))
@@ -835,12 +655,12 @@ have completed before cleanup.  Waits up to 5 seconds."
   (let ((test-files '())
         (test-buffers '())
         ;; Mock the function to ensure we're not in a project
-        (claude-code-ide-mcp--get-buffer-project-fn
-         (symbol-function 'claude-code-ide-mcp--get-buffer-project)))
+        (claude-code-ide--get-working-directory-fn
+         (symbol-function 'claude-code-ide--get-working-directory)))
     (unwind-protect
         (progn
           ;; Mock to return nil (no project)
-          (fset 'claude-code-ide-mcp--get-buffer-project (lambda () nil))
+          (fset 'claude-code-ide--get-working-directory (lambda () nil))
 
           ;; Create test files
           (dotimes (i 2)
@@ -860,7 +680,7 @@ have completed before cleanup.  Waits up to 5 seconds."
                 (should (member file paths))))))
 
       ;; Cleanup
-      (fset 'claude-code-ide-mcp--get-buffer-project claude-code-ide-mcp--get-buffer-project-fn)
+      (fset 'claude-code-ide--get-working-directory claude-code-ide--get-working-directory-fn)
       (dolist (buffer test-buffers)
         (kill-buffer buffer))
       (dolist (file test-files)
@@ -922,33 +742,31 @@ have completed before cleanup.  Waits up to 5 seconds."
 (ert-deftest claude-code-ide-test-mcp-server-lifecycle ()
   "Test MCP server start and stop."
   (require 'claude-code-ide-mcp)
-  (let ((test-dir (make-temp-file "mcp-test-" t))
+  (let ((test-workspace "test-mcp-workspace")
         (claude-code-ide-mcp--sessions (make-hash-table :test 'equal))
         (test-port nil))
     (unwind-protect
         (progn
-          ;; Start server for test directory
-          (setq test-port (claude-code-ide-mcp-start test-dir))
+          ;; Start server for test workspace
+          (setq test-port (claude-code-ide-mcp-start test-workspace))
           (should (numberp test-port))
           (should (>= test-port 10000))
           (should (<= test-port 65535))
           ;; Check lockfile exists
           (should (file-exists-p (claude-code-ide-mcp--lockfile-path test-port)))
-          ;; Stop server specifically for this test directory
-          (claude-code-ide-mcp-stop-session test-dir)
+          ;; Stop server for the test workspace
+          (claude-code-ide-mcp-stop-session test-workspace)
           ;; Wait a moment for cleanup to complete
           (sleep-for 0.1)
           ;; Check lockfile removed
           (should-not (file-exists-p (claude-code-ide-mcp--lockfile-path test-port))))
-      ;; Ensure cleanup - clean up by port if session cleanup didn't work
+      ;; Ensure cleanup - clean up by workspace name if session cleanup didn't work
       (when test-port
         (ignore-errors
-          (claude-code-ide-mcp-stop-session test-dir)
+          (claude-code-ide-mcp-stop-session test-workspace)
           (let ((lockfile (claude-code-ide-mcp--lockfile-path test-port)))
             (when (file-exists-p lockfile)
-              (delete-file lockfile)))))
-      (when (file-exists-p test-dir)
-        (delete-directory test-dir t)))))
+              (delete-file lockfile))))))))
 
 ;; Test for side window handling in openDiff
 (ert-deftest claude-code-ide-test-opendiff-side-window ()
@@ -978,7 +796,7 @@ have completed before cleanup.  Waits up to 5 seconds."
 
     (unwind-protect
         ;; Mock the project detection to return our test directory
-        (cl-letf (((symbol-function 'claude-code-ide-mcp--get-buffer-project)
+        (cl-letf (((symbol-function 'claude-code-ide--get-working-directory)
                    (lambda () temp-dir))
                   ((symbol-function 'claude-code-ide-mcp--get-current-session)
                    (lambda () test-session)))
@@ -1186,13 +1004,13 @@ have completed before cleanup.  Waits up to 5 seconds."
 
             ;; Session A
             (let ((default-directory project-a))
-              (claude-code-ide-mcp-start project-a)
-              (setq session-a (gethash project-a claude-code-ide-mcp--sessions)))
+              (claude-code-ide-mcp-start "workspace-a")
+              (setq session-a (gethash "workspace-a" claude-code-ide-mcp--sessions)))
 
             ;; Session B
             (let ((default-directory project-b))
-              (claude-code-ide-mcp-start project-b)
-              (setq session-b (gethash project-b claude-code-ide-mcp--sessions)))
+              (claude-code-ide-mcp-start "workspace-b")
+              (setq session-b (gethash "workspace-b" claude-code-ide-mcp--sessions)))
 
             ;; Set up mock clients for each session
             (setf (claude-code-ide-mcp-session-client session-a) :mock-client-a)
@@ -1253,9 +1071,9 @@ have completed before cleanup.  Waits up to 5 seconds."
     (unwind-protect
         (progn
           ;; Start MCP server
-          (setq test-port (claude-code-ide-mcp-start temp-dir))
+          (setq test-port (claude-code-ide-mcp-start))
           (should (numberp test-port))
-          (setq test-server (gethash temp-dir claude-code-ide-mcp--sessions))
+          (setq test-server (claude-code-ide-mcp--get-current-session))
           (should test-server)
 
           ;; Wait a moment for server to be ready
@@ -1398,7 +1216,7 @@ have completed before cleanup.  Waits up to 5 seconds."
     (unwind-protect
         (progn
           ;; Start MCP server
-          (setq test-port (claude-code-ide-mcp-start temp-dir))
+          (setq test-port (claude-code-ide-mcp-start))
           (should (numberp test-port))
 
           ;; Wait a moment for server to be ready
@@ -1458,99 +1276,19 @@ have completed before cleanup.  Waits up to 5 seconds."
       ;; Cleanup
       (when test-client
         (websocket-close test-client))
-      (when (gethash temp-dir claude-code-ide-mcp--sessions)
-        (claude-code-ide-mcp-stop-session temp-dir))
+      (when (claude-code-ide-mcp--get-current-session)
+        (claude-code-ide-mcp-stop-session (claude-code-ide--get-workspace-name)))
       (when (file-exists-p temp-dir)
         (delete-directory temp-dir t)))))
 
-;;; Phase 2: Terminal-Only Mode Tests
-
-(ert-deftest claude-code-ide-test-terminal-command-exists ()
-  "Test that claude-code-ide-terminal command exists and is interactive."
-  (should (fboundp 'claude-code-ide-terminal))
-  (should (commandp 'claude-code-ide-terminal)))
-
-(ert-deftest claude-code-ide-test-terminal-mode-no-auto-claude ()
-  "Test that terminal mode starts MCP server but doesn't auto-launch Claude."
-  (let* ((temp-dir (make-temp-file "test-terminal-mode-" t))
-         (claude-code-ide-mcp--sessions (make-hash-table :test 'equal))
-         (claude-code-ide--processes (make-hash-table :test 'equal))
-         (vterm-buffer nil)
-         (vterm-process nil)
-         (created-buffers '()))
-
-    (unwind-protect
-        ;; Mock vterm creation to capture what command would be run
-        (cl-letf* (((symbol-function 'vterm)
-                    (lambda (&optional _buffer-name)
-                      (let ((buffer (generate-new-buffer "*claude-code-ide-test*")))
-                        (push buffer created-buffers)
-                        (setq vterm-buffer buffer)
-                        (with-current-buffer buffer
-                          (setq major-mode 'vterm-mode)
-                          (setq vterm--process 'mock-process))
-                        buffer)))
-                   ((symbol-function 'vterm-send-string) #'ignore)
-                   ((symbol-function 'vterm-send-return) #'ignore)
-                   ((symbol-function 'get-buffer-process)
-                    (lambda (_buffer) 'mock-process))
-                   ((symbol-function 'set-process-sentinel) #'ignore)
-                   ((symbol-function 'claude-code-ide--display-buffer-in-side-window) #'ignore)
-                   (claude-code-ide-cli-debug nil))
-
-          ;; Call terminal mode
-          (let ((default-directory temp-dir))
-            (claude-code-ide-terminal))
-
-          ;; Should have started MCP server
-          (should (gethash temp-dir claude-code-ide-mcp--sessions))
-
-          ;; Should have created vterm buffer
-          (should vterm-buffer)
-          (should (buffer-live-p vterm-buffer))
-
-          ;; Should NOT have tracked the process as Claude process
-          ;; (because it's just a shell, not Claude CLI)
-          (should-not (gethash temp-dir claude-code-ide--processes)))
-
-      ;; Cleanup
-      (dolist (buffer created-buffers)
-        (when (buffer-live-p buffer)
-          (kill-buffer buffer)))
-      (when (gethash temp-dir claude-code-ide-mcp--sessions)
-        (claude-code-ide-mcp-stop-session temp-dir))
-      (when (file-exists-p temp-dir)
-        (delete-directory temp-dir t)))))
 
 
 
 
 ;;; Phase 2 Tests - Terminal-Only Mode
 
-(ert-deftest claude-code-ide-test-terminal-only-command-exists ()
-  "Test that the terminal-only command is defined."
-  (should (fboundp 'claude-code-ide-terminal)))
 
 
-(ert-deftest claude-code-ide-test-normal-mode-requires-cli ()
-  "Test that normal mode fails without Claude CLI."
-  (let* ((temp-dir (make-temp-file "test-cli-required-" t))
-         (claude-code-ide--processes (make-hash-table :test 'equal))
-         (claude-code-ide-mcp--sessions (make-hash-table :test 'equal)))
-
-    ;; Mock CLI as unavailable
-    (cl-letf (((symbol-function 'claude-code-ide--ensure-cli)
-               (lambda () nil)))  ; Mock CLI as NOT available
-
-      (unwind-protect
-          (progn
-            ;; Normal mode should fail without CLI
-            (let ((default-directory temp-dir))
-              (should-error (claude-code-ide--start-session nil nil)
-                            :type 'user-error)))
-
-        ;; Cleanup
-        (delete-directory temp-dir t)))))
 
 ;;; Dynamic Project Detection Tests
 
@@ -1756,34 +1494,6 @@ have completed before cleanup.  Waits up to 5 seconds."
       ;; Cleanup
       (fset 'process-live-p original-process-live-p))))
 
-(ert-deftest claude-code-ide-test-workspace-session-backward-compatibility ()
-  "Test that workspace sessions don't break existing directory-based session logic."
-  ;; Clear existing sessions
-  (clrhash claude-code-ide--processes)
-  (clrhash claude-code-ide--workspace-sessions)
-
-  (let ((test-directory "/tmp/test-project")
-        (test-process 'mock-process))
-
-    ;; Set directory-based process (existing behavior)
-    (claude-code-ide--set-process test-process test-directory)
-
-    ;; Verify it still works
-    (should (eq (claude-code-ide--get-process test-directory) test-process))
-
-    ;; Test that cleanup still works for directory-based sessions
-    (let ((original-process-live-p (symbol-function 'process-live-p)))
-      (unwind-protect
-          (progn
-            (fset 'process-live-p (lambda (_proc) nil))  ; Make process appear dead
-
-            ;; Run cleanup
-            (claude-code-ide--cleanup-dead-processes)
-
-            ;; Process should be removed
-            (should (null (claude-code-ide--get-process test-directory))))
-        ;; Cleanup
-        (fset 'process-live-p original-process-live-p)))))
 
 ;;; Workspace Lifecycle Hook Tests
 
@@ -2113,36 +1823,33 @@ have completed before cleanup.  Waits up to 5 seconds."
 
 (ert-deftest claude-code-ide-test-switch-workspace-sessions-with-active ()
   "Test switching between workspace sessions when sessions exist."
-  (claude-code-ide-test-with-workspace-session-mocks
-   (let* ((mock-process (make-process :name "test" :command '("echo" "test")))
-          (sessions (make-hash-table :test 'equal))
-          (choice-made nil)
-          (switch-called nil))
+  (let* ((mcp-sessions (make-hash-table :test 'equal))
+         (choice-made nil)
+         (switch-called nil))
 
-     ;; Set up mock sessions
-     (puthash "workspace1" `(:process ,mock-process) sessions)
-     (puthash "workspace2" `(:process ,mock-process) sessions)
+    ;; Set up mock MCP sessions
+    (puthash "workspace1" 'mock-session-1 mcp-sessions)
+    (puthash "workspace2" 'mock-session-2 mcp-sessions)
 
-     ;; Mock functions
-     (cl-letf (((symbol-function 'claude-code-ide--cleanup-dead-workspace-sessions)
-                (lambda ()))
-               ((symbol-value 'claude-code-ide--workspace-sessions) sessions)
-               ((symbol-function 'process-live-p)
-                (lambda (_) t))
-               ((symbol-function 'completing-read)
-                (lambda (prompt choices &rest _)
-                  (should (string-match "Switch to Claude workspace session" prompt))
-                  (should (>= (length choices) 2))
-                  (setq choice-made t)
-                  "workspace1"))
-               ((symbol-function 'claude-code-ide--switch-to-workspace-session)
-                (lambda (name)
-                  (should (equal name "workspace1"))
-                  (setq switch-called t))))
+    ;; Mock functions
+    (cl-letf (((symbol-value 'claude-code-ide-mcp--sessions) mcp-sessions)
+              ((symbol-function 'claude-code-ide-mcp--get-session-for-workspace)
+               (lambda (workspace-name)
+                 (gethash workspace-name mcp-sessions)))
+              ((symbol-function 'completing-read)
+               (lambda (prompt choices &rest _)
+                 (should (string-match "Switch to Claude workspace session" prompt))
+                 (should (>= (length choices) 2))
+                 (setq choice-made t)
+                 "workspace1"))
+              ((symbol-function 'claude-code-ide--switch-to-workspace-session)
+               (lambda (name)
+                 (should (equal name "workspace1"))
+                 (setq switch-called t))))
 
-       (claude-code-ide--switch-workspace-sessions)
-       (should choice-made)
-       (should switch-called)))))
+      (claude-code-ide--switch-workspace-sessions)
+      (should choice-made)
+      (should switch-called))))
 
 (ert-deftest claude-code-ide-test-switch-workspace-sessions-no-active ()
   "Test switching when no active workspace sessions exist."
@@ -2211,8 +1918,9 @@ have completed before cleanup.  Waits up to 5 seconds."
                        :port 12345
                        :original-tab "test-tab")))
 
-    ;; Setup MCP session
-    (puthash test-directory mcp-session claude-code-ide-mcp--sessions)
+    ;; Setup both workspace session and MCP session
+    (puthash "test-workspace" test-session claude-code-ide--workspace-sessions)
+    (puthash "test-workspace" mcp-session claude-code-ide-mcp--sessions)
 
     (unwind-protect
         (let ((serialized (claude-code-ide--serialize-session-state test-session)))

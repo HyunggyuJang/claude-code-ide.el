@@ -84,11 +84,6 @@
   active-diffs     ; Hash table of active diffs
   original-tab)    ; Original tab-bar tab where Claude was opened
 
-(defun claude-code-ide-mcp--get-buffer-project ()
-  "Get the project directory for the current buffer.
-Returns the expanded project root path if a project is found,
-otherwise returns nil."
-  (claude-code-ide--get-working-directory))
 
 (defun claude-code-ide-mcp--get-session-for-workspace (workspace-name)
   "Get the MCP session for WORKSPACE-NAME.
@@ -103,6 +98,7 @@ This is a convenience function that combines
 `claude-code-ide-mcp--get-session-for-workspace'."
   (when-let ((workspace (claude-code-ide--get-workspace-name)))
     (claude-code-ide-mcp--get-session-for-workspace workspace)))
+
 
 (defun claude-code-ide-mcp--find-session-by-websocket (ws)
   "Find the MCP session that owns the WebSocket WS.
@@ -604,8 +600,9 @@ Optional SESSION contains the MCP session context."
       (when (and (claude-code-ide-mcp-session-client session)
                  file-path)
         ;; Check if file is within project
-        (let ((file-in-project (string-prefix-p (expand-file-name project-dir)
-                                                (expand-file-name file-path))))
+        (let* ((project-dir (claude-code-ide-mcp-session-project-dir session))
+               (file-in-project (string-prefix-p (expand-file-name project-dir)
+                                                  (expand-file-name file-path))))
           (if file-in-project
               ;; File is in project - check cursor/selection changes
               (let* ((cursor-pos (point))
@@ -644,7 +641,7 @@ Optional SESSION contains the MCP session context."
       ;; Check if this is a different buffer than last tracked
       (when (and (not (eq current-buffer (claude-code-ide-mcp-session-last-buffer session)))
                  ;; Only track files within the project directory
-                 (string-prefix-p (expand-file-name project-dir)
+                 (string-prefix-p (expand-file-name (claude-code-ide-mcp-session-project-dir session))
                                   (expand-file-name file-path)))
         (setf (claude-code-ide-mcp-session-last-buffer session) current-buffer)
         ;; Send notification
