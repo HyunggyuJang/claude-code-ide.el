@@ -2016,8 +2016,7 @@ have completed before cleanup.  Waits up to 5 seconds."
          (claude-code-ide-mcp--sessions (make-hash-table :test 'equal))
          (test-workspace "test-vterm-workspace")
          (test-port nil)
-         (vterm-environment nil)
-         (vterm-mode t))
+         (vterm-environment nil))
 
     (unwind-protect
         (progn
@@ -2040,8 +2039,8 @@ have completed before cleanup.  Waits up to 5 seconds."
               (claude-code-ide--setup-vterm-environment)
 
               ;; Debug: Check what happened
-              (message "Buffer: %s, vterm-mode: %s, workspace: %s, port: %s"
-                       (buffer-name) vterm-mode
+              (message "Buffer: %s, workspace: %s, port: %s"
+                       (buffer-name)
                        (claude-code-ide--get-workspace-name)
                        (when (claude-code-ide--get-workspace-name)
                          (claude-code-ide-mcp-get-workspace-port (claude-code-ide--get-workspace-name))))
@@ -2071,7 +2070,6 @@ have completed before cleanup.  Waits up to 5 seconds."
       ;; Simulate being in a managed vterm buffer (named *claude-code*)
       (with-temp-buffer
         (rename-buffer "*claude-code-test*")
-        (setq-local vterm-mode t)
         (setq-local vterm-environment nil)
         (setq original-env vterm-environment)
 
@@ -2090,7 +2088,6 @@ have completed before cleanup.  Waits up to 5 seconds."
 
       (with-temp-buffer
         (rename-buffer "*vterm-test*")
-        (setq-local vterm-mode t)
         (setq-local vterm-environment nil)
         (setq original-env vterm-environment)
 
