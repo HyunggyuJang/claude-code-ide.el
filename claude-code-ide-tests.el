@@ -2035,8 +2035,6 @@ have completed before cleanup.  Waits up to 5 seconds."
             ;; Simulate being in an unmanaged vterm buffer (not named *claude-code*)
             (with-temp-buffer
               (rename-buffer "*vterm-test*")
-              ;; Set vterm-mode flag to simulate being in vterm mode
-              (setq-local vterm-mode t)
 
               ;; Call the vterm setup function directly
               (claude-code-ide--setup-vterm-environment)
