@@ -57,7 +57,6 @@
 (declare-function claude-code-ide-mcp-send-at-mentioned "claude-code-ide-mcp" ())
 
 ;; Doom Emacs function declarations
-(declare-function map! "doom-keybinds" (&rest rest))
 (declare-function doom-project-root "doom-lib" (&optional maybe-prompt))
 
 ;; persp-mode function declarations
@@ -470,15 +469,6 @@ variables for unmanaged vterm sessions (not created by claude-code-ide)."
 
 (when (featurep 'persp-mode)
   (claude-code-ide--register-persistence-hooks))
-
-;;; Doom Keybindings
-
-(when (and (featurep 'doom) (fboundp 'map!))
-  (map! :leader
-        (:prefix ("TAB" . "workspace")
-                 :desc "Claude Code session" "c" #'+workspace/claude-code
-                 :desc "Kill Claude session" "C" #'+workspace/claude-code-kill
-                 :desc "Restart Claude session" "R" #'+workspace/claude-code-restart)))
 
 (provide 'claude-code-ide)
 
