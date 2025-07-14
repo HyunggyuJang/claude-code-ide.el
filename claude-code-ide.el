@@ -106,13 +106,11 @@ Value: session data structure containing directory, workspace metadata, etc.")
 
 (defun claude-code-ide--get-workspace-name ()
   "Get current workspace name for session mapping.
-Uses fallback chain: persp-mode → directory-based naming → default."
-  (cond
-   ((and (featurep 'persp-mode) (fboundp 'persp-name) (fboundp 'get-current-persp) (persp-name (get-current-persp)))
-    (persp-name (get-current-persp)))
-   ((claude-code-ide--get-working-directory)
-    (file-name-nondirectory (directory-file-name (claude-code-ide--get-working-directory))))
-   (t "default")))
+Requires persp-mode to be available."
+  (unless (featurep 'persp-mode)
+    (error "persp-mode is required for workspace management"))
+  (or (persp-name (get-current-persp))
+      (error "No current perspective available")))
 
 
 

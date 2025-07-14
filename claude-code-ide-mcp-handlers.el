@@ -194,14 +194,8 @@ STARTUP-HOOK-FN is the hook function to remove after use."
           ;; Note: Buffer display is no longer needed with pure MCP architecture
           (setq claude-window nil)))
 
-      ;; Handle focus based on user preference
-      (cond
-       ;; If user wants Claude window focus (default), select it
-       ((and claude-code-ide-focus-claude-after-ediff claude-window)
-        (select-window claude-window))
-       ;; Otherwise, restore the original window (which might be one of the ediff windows)
-       (t
-        (select-window original-window))))
+      ;; Restore the original window (which might be one of the ediff windows)
+      (select-window original-window))
 
     ;; Remove this startup hook after use
     (remove-hook 'ediff-startup-hook startup-hook-fn)))
