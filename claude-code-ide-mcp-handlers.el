@@ -42,8 +42,6 @@
 (declare-function claude-code-ide-mcp-session-original-tab "claude-code-ide-mcp" (session))
 (declare-function ediff-really-quit "ediff-util" (reverse-default-keep-variants))
 (declare-function claude-code-ide-diagnostics-handler "claude-code-ide-diagnostics" (params &optional session))
-(declare-function claude-code-ide--get-buffer-name "claude-code-ide" (&optional directory))
-(declare-function claude-code-ide--display-buffer-in-side-window "claude-code-ide" (buffer))
 (defvar ediff-control-buffer)
 (defvar ediff-window-setup-function)
 (defvar ediff-split-window-function)
@@ -84,13 +82,10 @@ Returns the session if found, nil otherwise."
 
 (defun claude-code-ide-mcp--find-claude-side-window ()
   "Find the Claude Code side window in the current frame.
-Returns the window if found, nil otherwise."
-  (let ((claude-buffer-name (claude-code-ide--get-buffer-name)))
-    (cl-find-if (lambda (window)
-                  (and (window-parameter window 'window-side)
-                       (equal (buffer-name (window-buffer window))
-                              claude-buffer-name)))
-                (window-list))))
+Returns the window if found, nil otherwise.
+Note: With pure MCP architecture, Claude no longer has dedicated buffers."
+  ;; No-op: Claude no longer has dedicated buffers with pure MCP architecture
+  nil)
 
 
 (defun claude-code-ide-mcp--get-active-diffs (&optional session)
@@ -192,12 +187,12 @@ STARTUP-HOOK-FN is the hook function to remove after use."
     ;; Save the current window before any operations
     (let ((original-window (selected-window))
           (claude-window nil))
-      ;; Restore Claude side window (since we deleted all side windows before ediff)
-      (when-let* ((claude-buffer-name (claude-code-ide--get-buffer-name))
-                  (claude-buffer (get-buffer claude-buffer-name)))
-        (when (buffer-live-p claude-buffer)
-          ;; Display Claude buffer in side window and save the window
-          (setq claude-window (claude-code-ide--display-buffer-in-side-window claude-buffer))))
+      ;; Note: Claude buffer restoration is no longer needed with pure MCP architecture
+      (let ((claude-buffer nil))
+        (when claude-buffer
+          ;; This branch is never taken with pure MCP architecture
+          ;; Note: Buffer display is no longer needed with pure MCP architecture
+          (setq claude-window nil)))
 
       ;; Handle focus based on user preference
       (cond
