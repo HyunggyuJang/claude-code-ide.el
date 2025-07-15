@@ -434,16 +434,14 @@ Handles graceful restoration with error handling for corrupted data."
 ;; Auto-register hooks when module loads
 ;;; VTerm Integration for Unmanaged Terminals
 
-(defun claude-code-ide--setup-vterm-environment ()
-  "Set up workspace-specific environment variables for vterm sessions.
-This hook runs on vterm-mode-hook to automatically configure environment
-variables for unmanaged vterm sessions (not created by claude-code-ide)."
+(defun claude-code-ide--vterm-mode-advice (orig-fun &rest args)
+  "Advice for vterm-mode to set up workspace environment before process creation."
   (let* ((workspace (claude-code-ide--get-workspace-name))
          (port (when workspace
                  (claude-code-ide-mcp-get-workspace-port workspace))))
     (when port
       (claude-code-ide-debug "Setting up vterm environment for workspace %s (port %d)" workspace port)
-      ;; Set buffer-local vterm-environment
+      ;; Set buffer-local vterm-environment before vterm-mode runs
       (make-local-variable 'vterm-environment)
       (setq vterm-environment
             (append (list (format "CLAUDE_CODE_SSE_PORT=%d" port)
@@ -452,17 +450,19 @@ variables for unmanaged vterm sessions (not created by claude-code-ide)."
                           "FORCE_CODE_TERMINAL=true")
                     ;; Preserve existing environment variables
                     (when (boundp 'vterm-environment) vterm-environment)))
-      (claude-code-ide-debug "Vterm environment configured: %s" vterm-environment))))
+      (claude-code-ide-debug "Vterm environment configured: %s" vterm-environment)))
+  ;; Call the original vterm-mode function
+  (apply orig-fun args))
 
 (defun claude-code-ide--enable-vterm-integration ()
   "Enable automatic vterm integration for unmanaged terminals."
   (when (fboundp 'vterm-mode)
-    (add-hook 'vterm-mode-hook #'claude-code-ide--setup-vterm-environment)))
+    (advice-add 'vterm-mode :around #'claude-code-ide--vterm-mode-advice)))
 
 (defun claude-code-ide--disable-vterm-integration ()
   "Disable automatic vterm integration."
   (when (fboundp 'vterm-mode)
-    (remove-hook 'vterm-mode-hook #'claude-code-ide--setup-vterm-environment)))
+    (advice-remove 'vterm-mode #'claude-code-ide--vterm-mode-advice)))
 
 ;; Enable vterm integration by default
 (claude-code-ide--enable-vterm-integration)
