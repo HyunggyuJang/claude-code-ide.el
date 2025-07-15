@@ -434,36 +434,30 @@ Handles graceful restoration with error handling for corrupted data."
 ;; Auto-register hooks when module loads
 ;;; VTerm Integration for Unmanaged Terminals
 
-(defun claude-code-ide--vterm-advice (orig-fun &rest args)
-  "Advice for vterm function to set up workspace environment before buffer creation."
-  (let* ((workspace (claude-code-ide--get-workspace-name))
-         (port (when workspace
-                 (claude-code-ide-mcp-get-workspace-port workspace)))
-         ;; Set up vterm-environment in the let-binding scope where vterm will use it
-         (vterm-environment (if port
-                               (progn
-                                 (claude-code-ide-debug "Setting up vterm environment for workspace %s (port %d)" workspace port)
-                                 (let ((env-vars (append (list (format "CLAUDE_CODE_SSE_PORT=%d" port)
-                                                               "ENABLE_IDE_INTEGRATION=true"
-                                                               "TERM_PROGRAM=emacs"
-                                                               "FORCE_CODE_TERMINAL=true")
-                                                         ;; Preserve existing environment variables
-                                                         vterm-environment)))
-                                   (claude-code-ide-debug "Vterm environment configured: %s" env-vars)
-                                   env-vars))
-                             vterm-environment)))
-    ;; Call the original vterm function with modified environment
+(defun claude-code-ide--vterm-mode-advice (orig-fun &rest args)
+  "Advice for vterm-mode to set up workspace environment before process creation."
+  (let ((vterm-environment vterm-environment)) ;; vterm-environment should be loaded when `vterm-mode' is called
+    (when-let* ((workspace (claude-code-ide--get-workspace-name))
+                (port (claude-code-ide-mcp-get-workspace-port workspace)))
+      (claude-code-ide-debug "Setting up vterm environment for workspace %s (port %d)" workspace port)
+      (cl-callf2 append
+          (list (format "CLAUDE_CODE_SSE_PORT=%d" port)
+                "ENABLE_IDE_INTEGRATION=true"
+                "TERM_PROGRAM=emacs"
+                "FORCE_CODE_TERMINAL=true")
+          vterm-environment)
+      (claude-code-ide-debug "Vterm environment configured: %s" vterm-environment))
     (apply orig-fun args)))
 
 (defun claude-code-ide--enable-vterm-integration ()
   "Enable automatic vterm integration for unmanaged terminals."
-  (when (fboundp 'vterm)
-    (advice-add 'vterm :around #'claude-code-ide--vterm-advice)))
+  (when (fboundp 'vterm-mode)
+    (advice-add 'vterm-mode :around #'claude-code-ide--vterm-mode-advice)))
 
 (defun claude-code-ide--disable-vterm-integration ()
   "Disable automatic vterm integration."
-  (when (fboundp 'vterm)
-    (advice-remove 'vterm #'claude-code-ide--vterm-advice)))
+  (when (fboundp 'vterm-mode)
+    (advice-remove 'vterm-mode #'claude-code-ide--vterm-mode-advice)))
 
 ;; Enable vterm integration by default
 (claude-code-ide--enable-vterm-integration)

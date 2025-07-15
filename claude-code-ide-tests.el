@@ -2041,13 +2041,14 @@ have completed before cleanup.  Waits up to 5 seconds."
               (with-temp-buffer
                 (rename-buffer "*vterm-test*")
 
-                ;; Mock the vterm function to capture the environment it receives
-                (cl-letf (((symbol-function 'vterm)
+                ;; Mock the vterm-mode function to capture the environment in its let-binding scope
+                (cl-letf (((symbol-function 'vterm-mode)
                            (lambda (&rest args)
+                             ;; Capture the vterm-environment as it exists within the advice's let-binding
                              (setq captured-env vterm-environment)
                              (setq test-called t))))
-                  ;; Call the advice function which should call our mocked vterm
-                  (claude-code-ide--vterm-advice 'vterm))
+                  ;; Call the advice function which should call our mocked vterm-mode
+                  (claude-code-ide--vterm-mode-advice 'vterm-mode))
                 (should test-called))
 
               ;; Verify environment variables were set by the advice
