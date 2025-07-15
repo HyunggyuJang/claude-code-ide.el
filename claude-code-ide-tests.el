@@ -2037,20 +2037,20 @@ have completed before cleanup.  Waits up to 5 seconds."
             (should (equal test-port (claude-code-ide-mcp-get-workspace-port test-workspace)))
 
             ;; Simulate being in an unmanaged vterm buffer (not named *claude-code*)
-            (let (captured-env captured-local-var-p)
+            (let (captured-env)
               (with-temp-buffer
                 (rename-buffer "*vterm-test*")
 
-                ;; Call the advice function directly to test it works
-                (claude-code-ide--vterm-mode-advice 'vterm-mode)
-                (should test-called)
-
-                ;; Capture values before buffer cleanup
-                (setq captured-local-var-p (local-variable-p 'vterm-environment (current-buffer)))
-                (setq captured-env vterm-environment))
+                ;; Mock the vterm function to capture the environment it receives
+                (cl-letf (((symbol-function 'vterm)
+                           (lambda (&rest args)
+                             (setq captured-env vterm-environment)
+                             (setq test-called t))))
+                  ;; Call the advice function which should call our mocked vterm
+                  (claude-code-ide--vterm-advice 'vterm))
+                (should test-called))
 
               ;; Verify environment variables were set by the advice
-              (should captured-local-var-p)
               (should captured-env)
               (should (member (format "CLAUDE_CODE_SSE_PORT=%d" test-port) captured-env))
               (should (member "ENABLE_IDE_INTEGRATION=true" captured-env))
