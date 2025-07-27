@@ -83,6 +83,11 @@
   :type 'boolean
   :group 'claude-code-ide)
 
+(defcustom claude-code-ide-fallback-directory "~/notes"
+  "Default directory to use when no project directory can be determined."
+  :type 'directory
+  :group 'claude-code-ide)
+
 
 ;;; Constants
 
@@ -140,12 +145,12 @@ With MCP architecture, this is now a no-op since MCP handles cleanup."
 
 (defun claude-code-ide--get-working-directory ()
   "Get current working directory for Claude Code IDE.
-Uses fallback chain: doom-project-root → default-directory → original constant."
+Uses fallback chain: doom-project-root → default-directory → claude-code-ide-fallback-directory."
   (cond
    ((and (featurep 'doom) (fboundp 'doom-project-root) (doom-project-root))
     (doom-project-root))
    (default-directory default-directory)
-   (t (expand-file-name "~/notes"))))
+   (t (expand-file-name claude-code-ide-fallback-directory))))
 
 
 

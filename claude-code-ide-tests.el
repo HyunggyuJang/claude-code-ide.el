@@ -1191,7 +1191,7 @@ have completed before cleanup.  Waits up to 5 seconds."
        (should (string= (claude-code-ide--get-working-directory) expected))))))
 
 (ert-deftest claude-code-ide-test-dynamic-project-detection-ultimate-fallback ()
-  "Test dynamic project detection ultimate fallback to ~/notes."
+  "Test dynamic project detection ultimate fallback to `claude-code-ide-fallback-directory'."
   ;; This test simulates a scenario where default-directory is nil/empty
   (let ((default-directory nil))
     ;; Ensure no Doom features are available
@@ -1199,8 +1199,8 @@ have completed before cleanup.  Waits up to 5 seconds."
     (when (fboundp 'doom-project-root)
       (fmakunbound 'doom-project-root))
 
-    ;; Should fall back to hardcoded ~/notes when all else fails
-    (should (string= (claude-code-ide--get-working-directory) (expand-file-name "~/notes")))))
+    ;; Should fall back to claude-code-ide-fallback-directory when all else fails
+    (should (string= (claude-code-ide--get-working-directory) (expand-file-name claude-code-ide-fallback-directory)))))
 
 (ert-deftest claude-code-ide-test-dynamic-project-detection-doom-returns-nil ()
   "Test dynamic project detection when Doom project root returns nil."
