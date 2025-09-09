@@ -454,15 +454,186 @@ Handles graceful restoration with error handling for corrupted data."
       (claude-code-ide-debug "Vterm environment configured: %s" vterm-environment))
     (apply orig-fun args)))
 
+(defcustom claude-code-ide-vterm-anti-flicker t
+  "Enable intelligent flicker reduction for vterm display.
+When enabled, this feature optimizes terminal rendering by detecting
+and batching rapid update sequences.  This provides smoother visual
+output during complex terminal operations such as expanding text areas
+and rapid screen updates.
+
+This optimization applies only to vterm and uses advanced pattern
+matching to maintain responsiveness while improving visual quality."
+  :type 'boolean
+  :group 'claude-code-ide)
+
+(defcustom claude-code-ide-vterm-render-delay 0.005
+  "Rendering optimization delay for batched terminal updates.
+This parameter defines the collection window for related terminal
+update sequences when anti-flicker mode is active.  The timing
+balances visual smoothness with interaction responsiveness.
+
+The 0.005 second (5ms) default delivers optimal rendering quality
+with imperceptible latency."
+  :type 'number
+  :group 'claude-code-ide)
+
+(defvar-local claude-code-ide--vterm-render-queue nil
+  "Queue for optimizing terminal rendering sequences.")
+
+(defvar-local claude-code-ide--vterm-render-timer nil
+  "Timer for executing queued rendering operations.")
+
+(defun claude-code-ide--vterm-smart-renderer (orig-fun process input)
+  "Smart rendering filter for optimized vterm display updates.
+This advanced filter analyzes terminal output patterns to identify
+rapid update sequences that benefit from batched processing.
+It significantly improves visual quality during complex operations.
+
+ORIG-FUN is the underlying filter to enhance.
+PROCESS is the terminal process being optimized.
+INPUT contains the terminal output stream."
+  (with-current-buffer (process-buffer process)
+    ;; Detect rapid terminal redraw sequences
+    ;; Pattern analysis for complex terminal updates:
+    ;; - Vertical cursor movements (ESC[<n>A)
+    ;; - Line clearing operations (ESC[K)
+    ;; - High escape sequence density
+    (let* ((complex-redraw-detected
+            ;; Pattern: vertical movement + clear, repeated
+            (string-match-p "\033\\[[0-9]*A.*\033\\[K.*\033\\[[0-9]*A.*\033\\[K" input))
+           (clear-count (cl-count-if (lambda (s) (string= s "\033[K"))
+                                     (split-string input "\033\\[K" t)))
+           (escape-count (cl-count ?\033 input))
+           (input-length (length input))
+           ;; High escape density indicates redrawing, not normal output
+           (escape-density (if (> input-length 0)
+                               (/ (float escape-count) input-length)
+                             0)))
+      ;; Optimize rendering for detected patterns:
+      ;; 1. Complex redraw sequence detected, OR
+      ;; 2. Escape sequence density exceeds threshold with line operations
+      ;; 3. OR already queuing (to complete the sequence)
+      (if (or complex-redraw-detected
+              (and (> escape-density 0.3)
+                   (>= clear-count 2))
+              claude-code-ide--vterm-render-queue)
+          (progn
+            ;; Add to buffer
+            (setq claude-code-ide--vterm-render-queue
+                  (concat claude-code-ide--vterm-render-queue input))
+            ;; Reset existing render timer
+            (when claude-code-ide--vterm-render-timer
+              (cancel-timer claude-code-ide--vterm-render-timer))
+            ;; Schedule optimized rendering
+            ;; Timing calibrated for visual quality
+            (setq claude-code-ide--vterm-render-timer
+                  (run-at-time claude-code-ide-vterm-render-delay nil
+                               (lambda (buf)
+                                 (when (buffer-live-p buf)
+                                   (with-current-buffer buf
+                                     (when claude-code-ide--vterm-render-queue
+                                       (let ((inhibit-redisplay t)
+                                             (data claude-code-ide--vterm-render-queue))
+                                         ;; Clear queue first to prevent recursion
+                                         (setq claude-code-ide--vterm-render-queue nil
+                                               claude-code-ide--vterm-render-timer nil)
+                                         ;; Execute queued rendering
+                                         (funcall orig-fun
+                                                  (get-buffer-process buf)
+                                                  data))))))
+                               (current-buffer))))
+        ;; Standard processing for regular output
+        (funcall orig-fun process input)))))
+
+(defun claude-code-ide--vterm-toggle-scroll (&rest _)
+  (when (eq major-mode 'vterm-mode)
+    (if (> (window-end) (buffer-size))
+        (when vterm-copy-mode (vterm-copy-mode-done nil))
+      (vterm-copy-mode 1))))
+
+(defcustom claude-code-ide-prevent-reflow-glitch t
+  "Workaround for Claude Code terminal scrolling bug #1422.
+When non-nil (default), prevents the terminal from reflowing on height-only
+changes which can trigger uncontrollable scrolling in Claude Code.
+See: https://github.com/anthropics/claude-code/issues/1422
+This setting should be removed once the upstream bug is fixed."
+  :type 'boolean
+  :group 'claude-code-ide)
+
+;;; Terminal Reflow Glitch Prevention
+;;
+;; This section implements a workaround for Claude Code bug #1422
+;; where terminal reflows during height-only changes can cause
+;; uncontrollable scrolling. This code should be removed once
+;; the upstream bug is fixed.
+;; See: https://github.com/anthropics/claude-code/issues/1422
+
+(defun claude-code-ide--terminal-resize-handler ()
+  "Retrieve the terminal's resize handling function based on backend."
+  #'vterm--window-adjust-process-window-size)
+
+(defun claude-code-ide--terminal-scroll-mode-active-p ()
+  "Determine if terminal is currently in scroll/copy mode."
+  (bound-and-true-p vterm-copy-mode))
+
+(defun claude-code-ide--session-buffer-p (buffer)
+  "Check if BUFFER belongs to a Claude Code session."
+  (buffer-local-value '+vterm--id buffer))
+
+(defun claude-code-ide--terminal-reflow-filter (original-fn &rest args)
+  "Filter terminal reflows to prevent height-only resize triggers.
+This wraps ORIGINAL-FN to suppress reflow signals unless the terminal
+width has actually changed, working around the scrolling glitch."
+  (let* ((base-result (apply original-fn args))
+         (dimensions-stable t))
+    ;; Examine each window showing a Claude session
+    (dolist (win (window-list))
+      (when-let* ((buf (window-buffer win))
+                  ((claude-code-ide--session-buffer-p buf)))
+        (let* ((new-width (window-width win))
+               (cached-width (window-parameter win 'claude-code-ide-cached-width)))
+          ;; Width change detected
+          (unless (eql new-width cached-width)
+            (setq dimensions-stable nil)
+            (set-window-parameter win 'claude-code-ide-cached-width new-width)))))
+    ;; Decide whether to allow reflow
+    (cond
+     ;; Not in a Claude buffer - pass through
+     ((not (claude-code-ide--session-buffer-p (current-buffer)))
+      base-result)
+     ;; In scroll mode - suppress reflow
+     ((claude-code-ide--terminal-scroll-mode-active-p)
+      nil)
+     ;; Dimensions changed - allow reflow
+     ((not dimensions-stable)
+      base-result)
+     ;; No width change - suppress reflow
+     (t nil))))
+
 (defun claude-code-ide--enable-vterm-integration ()
   "Enable automatic vterm integration for unmanaged terminals."
   (when (fboundp 'vterm-mode)
-    (advice-add 'vterm-mode :around #'claude-code-ide--vterm-mode-advice)))
+    (advice-add 'vterm-mode :around #'claude-code-ide--vterm-mode-advice)
+    ;; Configure vterm for enhanced performance and visual quality.
+    ;; Establishes optimal terminal settings including rendering optimizations,
+    ;; cursor management, and process buffering for superior user experience."
+    (when claude-code-ide-vterm-anti-flicker
+      (advice-add 'vterm--filter :around #'claude-code-ide--vterm-smart-renderer)
+      (advice-add 'set-window-vscroll :after #'claude-code-ide--vterm-toggle-scroll))
+    (when claude-code-ide-prevent-reflow-glitch
+      (advice-add (claude-code-ide--terminal-resize-handler)
+                  :around #'claude-code-ide--terminal-reflow-filter))))
 
 (defun claude-code-ide--disable-vterm-integration ()
   "Disable automatic vterm integration."
   (when (fboundp 'vterm-mode)
-    (advice-remove 'vterm-mode #'claude-code-ide--vterm-mode-advice)))
+    (advice-remove 'vterm-mode #'claude-code-ide--vterm-mode-advice)
+    (when claude-code-ide-vterm-anti-flicker
+      (advice-remove 'vterm--filter #'claude-code-ide--vterm-smart-renderer)
+      (advice-add 'set-window-vscroll #'claude-code-ide--vterm-toggle-scroll))
+    (when claude-code-ide-prevent-reflow-glitch
+      (advice-remove (claude-code-ide--terminal-resize-handler)
+                     #'claude-code-ide--terminal-reflow-filter))))
 
 ;; Enable vterm integration by default
 (claude-code-ide--enable-vterm-integration)
