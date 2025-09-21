@@ -483,6 +483,8 @@ with imperceptible latency."
 (defvar-local claude-code-ide--vterm-render-timer nil
   "Timer for executing queued rendering operations.")
 
+(defvar-local claude-code-ide--copy-mode t)
+
 (defun claude-code-ide--vterm-smart-renderer (orig-fun process input)
   "Smart rendering filter for optimized vterm display updates.
 This advanced filter analyzes terminal output patterns to identify
@@ -546,7 +548,7 @@ INPUT contains the terminal output stream."
         (funcall orig-fun process input)))))
 
 (defun claude-code-ide--vterm-toggle-scroll (&rest _)
-  (when (eq major-mode 'vterm-mode)
+  (when (and claude-code-ide--copy-mode (claude-code-ide--session-buffer-p (current-buffer)))
     (if (> (window-end) (buffer-size))
         (when vterm-copy-mode (vterm-copy-mode-done nil))
       (vterm-copy-mode 1))))
@@ -634,6 +636,11 @@ width has actually changed, working around the scrolling glitch."
     (when claude-code-ide-prevent-reflow-glitch
       (advice-remove (claude-code-ide--terminal-resize-handler)
                      #'claude-code-ide--terminal-reflow-filter))))
+
+;;;###autoload
+(defun claude-code-toggle-auto-copy-mode ()
+  (interactive)
+  (setq (not claude-code-ide--copy-mode)))
 
 ;; Enable vterm integration by default
 (claude-code-ide--enable-vterm-integration)
