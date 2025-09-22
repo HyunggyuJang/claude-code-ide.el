@@ -640,7 +640,7 @@ width has actually changed, working around the scrolling glitch."
 ;;;###autoload
 (defun claude-code-toggle-auto-copy-mode ()
   (interactive)
-  (setq (not claude-code-ide--copy-mode)))
+  (cl-callf not claude-code-ide--copy-mode))
 
 ;; Enable vterm integration by default
 (claude-code-ide--enable-vterm-integration)
